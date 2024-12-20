@@ -8,7 +8,7 @@ This is still a work in progress and may not be fully functional yet. I plan on 
 
 ## Demo
 
-[!(https://github.com/user-attachments/assets/5c1c0292-18d8-41c6-a621-ea1b45fd4099)
+https://github.com/user-attachments/assets/5c1c0292-18d8-41c6-a621-ea1b45fd4099
 
 I am using a custom shell script to execute the `pnpm types` command. I will be writing about this soon on my blog at [https://jovianmoon.io](https://jovianmoon.io).
 
