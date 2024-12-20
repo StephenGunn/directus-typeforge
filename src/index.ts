@@ -5,7 +5,6 @@ import { z } from "zod";
 import tmp from "tmp";
 
 tmp.setGracefulCleanup();
-
 export type ReadSpecFileOptions = {
   readonly specFile?: string;
   readonly host?: string;
@@ -33,6 +32,36 @@ type FieldItems = {
   oneOf?: { type: string; $ref: string }[];
   type?: string;
 };
+
+// Add type tracking
+type TypeDefinition = {
+  content: string;
+  hasProperties: boolean;
+};
+
+class TypeTracker {
+  private types: Map<string, TypeDefinition>;
+
+  constructor() {
+    this.types = new Map();
+  }
+
+  addType(name: string, content: string, hasProperties: boolean) {
+    this.types.set(name, { content, hasProperties });
+  }
+
+  hasValidContent(name: string): boolean {
+    const type = this.types.get(name);
+    return type !== undefined && type.hasProperties;
+  }
+
+  getAllValidTypes(): string {
+    return Array.from(this.types.entries())
+      .filter(([, def]) => def.hasProperties)
+      .map(([, def]) => def.content)
+      .join("");
+  }
+}
 
 const isReferenceObject = (
   obj:
@@ -156,6 +185,7 @@ const generateSDKInterface = (
   refName: string,
   collectionName?: string,
   spec?: OpenAPIV3.Document,
+  typeTracker?: TypeTracker,
 ): string => {
   if (!schema.properties) return "";
 
@@ -179,14 +209,13 @@ const generateSDKInterface = (
   if (nonSystemFields.length === 0) return "";
 
   let interfaceStr = `export type ${refName} = {\n`;
+  let hasValidProperties = false;
 
   const getRefType = (ref: string): string => {
     if (ref.startsWith("#/components/schemas/")) {
       const type = ref.split("/").pop() as string;
       const schemas = spec?.components?.schemas;
       const exists = schemas && type in schemas;
-
-      writeFile("spec.json", JSON.stringify(spec), { encoding: "utf-8" });
 
       if (!exists) return "string";
 
@@ -213,6 +242,7 @@ const generateSDKInterface = (
 
   for (const [propName, propSchema] of nonSystemFields) {
     if (typeof propSchema !== "object") continue;
+    hasValidProperties = true;
 
     if ("oneOf" in propSchema) {
       const ref = propSchema.oneOf?.find((item) => "$ref" in item)?.$ref;
@@ -264,7 +294,13 @@ const generateSDKInterface = (
     }
   }
 
-  interfaceStr += "}\n\n";
+  interfaceStr += "};\n\n";
+
+  if (typeTracker) {
+    typeTracker.addType(refName, interfaceStr, hasValidProperties);
+    return ""; // Return empty string as we'll collect types at the end
+  }
+
   return interfaceStr;
 };
 
@@ -274,12 +310,12 @@ export const generateTypeScript = async (
 ): Promise<string> => {
   const tempFile = tmp.fileSync({ postfix: ".json" });
   const tempFilePath = tempFile.name;
+  const typeTracker = new TypeTracker();
 
   try {
     await writeFile(tempFilePath, JSON.stringify(spec), { encoding: "utf-8" });
     let source = "";
 
-    const interfaces: string[] = [];
     const collectionSchemas: Record<
       string,
       {
@@ -304,21 +340,14 @@ export const generateTypeScript = async (
         const schema = (spec.components?.schemas?.[ref] ??
           {}) as OpenAPIV3.SchemaObject;
         const refName = toPascalCase(ref);
-        const sdkInterface = generateSDKInterface(
-          schema,
-          refName,
-          collection,
-          spec,
-        );
-        if (sdkInterface) {
-          interfaces.push(sdkInterface);
+        generateSDKInterface(schema, refName, collection, spec, typeTracker);
+        if (typeTracker.hasValidContent(refName)) {
           collectionSchemas[collection] = { ref, schema };
         }
       }
     }
 
     const systemCollections = findSystemCollections(spec);
-
     for (const collection of systemCollections) {
       const schema = Object.values(spec.components?.schemas ?? {}).find(
         (schema) => {
@@ -329,33 +358,30 @@ export const generateTypeScript = async (
 
       if (schema) {
         const refName = toPascalCase(collection);
-        const sdkInterface = generateSDKInterface(
-          schema,
-          refName,
-          collection,
-          spec,
-        );
-        if (sdkInterface) {
-          interfaces.push(sdkInterface);
+        generateSDKInterface(schema, refName, collection, spec, typeTracker);
+        if (typeTracker.hasValidContent(refName)) {
           collectionSchemas[collection] = { ref: collection, schema };
         }
       }
     }
 
-    source += `\nexport type ${typeName} = {\n`;
-    const collectionEntries = Object.entries(collectionSchemas);
-    if (collectionEntries.length > 0) {
-      for (const [collectionName, { ref }] of collectionEntries) {
+    const validCollections = Object.entries(collectionSchemas).filter(
+      ([, { ref }]) => typeTracker.hasValidContent(toPascalCase(ref)),
+    );
+
+    if (validCollections.length > 0) {
+      source += `\nexport type ${typeName} = {\n`;
+      for (const [collectionName, { ref }] of validCollections) {
         const pascalCaseName = toPascalCase(ref);
         const schema = (spec.components?.schemas?.[ref] ??
           {}) as ExtendedSchemaObject;
         const isSingleton = !!schema?.["x-singleton"];
         source += `  ${collectionName}: ${pascalCaseName}${isSingleton ? "" : "[]"};\n`;
       }
+      source += `};\n\n`;
     }
-    source += `};\n\n`;
 
-    source += interfaces.join("");
+    source += typeTracker.getAllValidTypes();
     source = source.replace(/\| \{\}\[\]/g, "");
 
     return source;

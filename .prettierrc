@@ -8,5 +8,6 @@
   "quoteProps": "consistent",
   "jsxSingleQuote": false,
   "arrowParens": "always",
-  "endOfLine": "auto"
+  "endOfLine": "auto",
+  "proseWrap": "always"
 }
