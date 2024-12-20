@@ -6,6 +6,10 @@ This tool is a fork and rewrite of [elierotenberg/directus-typescript-gen](https
 
 This is still a work in progress and may not be fully functional yet. I plan on rewriting a lot of this but wanted to post the first real working version.
 
+## Demo
+
+[!(https://raw.githubusercontent.com/stephengunn/directus-typeforge/main/typeforge.mov)
+
 ## Features
 
 - **Dynamic Generation:** Get types from a static schema file or an active Directus instance.
