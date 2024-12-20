@@ -13,6 +13,14 @@ This is still a work in progress and may not be fully functional yet. I plan on 
 - **Relationships:** Seamlessly represent collection relationships.
 - **Configurable Output:** Set custom root type names and output file paths.
 
+## Todo
+
+- [ ] Rewrite the code to be more modular and easier to read.
+- [ ] Add more options for generating types like prefixing, suffixing, etc.
+- [ ] Add support for static admin token authentication.
+- [ ] Prevent empty system collection types from being generated.
+- [ ] Derive system fields from the Directus API.
+
 ## Installation
 
 ### Using `npx`
@@ -94,7 +102,17 @@ export type DirectusUsers = {
 
 ## Integration
 
-Use the generated types directly with the Directus SDK for stronger type-checking and autocompletion.
+Use the generated types directly with the Directus SDK for stronger type-checking and autocompletion. Pass the main collection type to the SDK's `createDirectus` function.
+
+```typescript
+import type { ApiCollections } from "$lib/types/directus/api-collection";
+import { DIRECTUS_URL } from "$env/static/private";
+import { createDirectus, rest } from "@directus/sdk";
+
+export const initDirectus = () => {
+  return createDirectus<ApiCollections>(DIRECTUS_URL).with(rest());
+};
+```
 
 ## License
 
