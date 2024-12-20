@@ -4,6 +4,10 @@
 
 This tool is a fork and rewrite of [elierotenberg/directus-typescript-gen](https://github.com/elierotenberg/directus-typescript-gen).
 
+[View project on NPM](https://www.npmjs.com/package/directus-typeforge)
+
+## Beta Disclaimer
+
 This is still a work in progress and may not be fully functional yet. I plan on rewriting a lot of this but wanted to post the first real working version.
 
 ## Demo
