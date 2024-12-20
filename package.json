@@ -38,8 +38,10 @@
     }
   },
   "files": [
-    "./build/**/*.{js,cjs}",
-    "./build/**/*.{js,cjs}.map"
+    "build/**/*.js",
+    "build/**/*.cjs",
+    "build/**/*.d.ts",
+    "build/**/*.map"
   ],
   "main": "./build/index.cjs",
   "scripts": {
