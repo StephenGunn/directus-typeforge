@@ -5,6 +5,7 @@ import { z } from "zod";
 import tmp from "tmp";
 
 tmp.setGracefulCleanup();
+
 export type ReadSpecFileOptions = {
   readonly specFile?: string;
   readonly host?: string;
@@ -36,7 +37,7 @@ type FieldItems = {
 // Add type tracking
 type TypeDefinition = {
   content: string;
-  hasProperties: boolean;
+  properties: string[];
 };
 
 class TypeTracker {
@@ -46,19 +47,29 @@ class TypeTracker {
     this.types = new Map();
   }
 
-  addType(name: string, content: string, hasProperties: boolean) {
-    this.types.set(name, { content, hasProperties });
+  addType(name: string, content: string, properties: string[]) {
+    // Add default id field for Directus types if they're empty
+    const isDirectusType = name.startsWith("Directus");
+    if (isDirectusType && properties.length === 0) {
+      // Most Directus types use string IDs except for specific cases
+      const idType =
+        name === "DirectusPermissions" || name === "DirectusOperations"
+          ? "number"
+          : "string";
+      properties = ["id"];
+      content = `export type ${name} = {\n  id: ${idType};\n};\n\n`;
+    }
+    this.types.set(name, { content, properties });
   }
 
   hasValidContent(name: string): boolean {
     const type = this.types.get(name);
-    return type !== undefined && type.hasProperties;
+    return type !== undefined && type.properties.length > 0;
   }
 
   getAllValidTypes(): string {
-    return Array.from(this.types.entries())
-      .filter(([, def]) => def.hasProperties)
-      .map(([, def]) => def.content)
+    return Array.from(this.types.values())
+      .map((def) => def.content)
       .join("");
   }
 }
@@ -190,6 +201,9 @@ const generateSDKInterface = (
   if (!schema.properties) return "";
 
   const isSystemField = (fieldName: string, collection?: string): boolean => {
+    // Always keep 'id' field regardless of collection
+    if (fieldName === "id") return false;
+
     if (!collection?.startsWith("directus_")) {
       return false;
     }
@@ -209,7 +223,7 @@ const generateSDKInterface = (
   if (nonSystemFields.length === 0) return "";
 
   let interfaceStr = `export type ${refName} = {\n`;
-  let hasValidProperties = false;
+  const properties: string[] = [];
 
   const getRefType = (ref: string): string => {
     if (ref.startsWith("#/components/schemas/")) {
@@ -242,7 +256,7 @@ const generateSDKInterface = (
 
   for (const [propName, propSchema] of nonSystemFields) {
     if (typeof propSchema !== "object") continue;
-    hasValidProperties = true;
+    properties.push(propName);
 
     if ("oneOf" in propSchema) {
       const ref = propSchema.oneOf?.find((item) => "$ref" in item)?.$ref;
@@ -297,7 +311,7 @@ const generateSDKInterface = (
   interfaceStr += "};\n\n";
 
   if (typeTracker) {
-    typeTracker.addType(refName, interfaceStr, hasValidProperties);
+    typeTracker.addType(refName, interfaceStr, properties);
     return ""; // Return empty string as we'll collect types at the end
   }
 
