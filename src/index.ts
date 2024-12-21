@@ -45,7 +45,6 @@ export async function generateTypeScript(
   }
 }
 
-// Export types
 export type {
   ReadSpecFileOptions,
   GenerateTypeScriptOptions,
