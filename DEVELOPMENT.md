@@ -114,3 +114,9 @@ const types = await generateTypeScript(spec, {
 - Handles cleanup automatically
 - Some type assertions are used with TODO markers for future improvement
 - System fields are defined separately for maintainability
+
+## Known Issues
+
+- Diretus does not provide an identifier for system fields, so they are
+  hardcoded
+- JSON repeaters are not yet supported and return an unknown type
