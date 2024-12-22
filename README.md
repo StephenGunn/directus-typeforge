@@ -35,11 +35,23 @@ writing about this soon on my blog at
 
 ## Todo
 
+- [x] Prevent empty system collection types from being generated.
 - [ ] Rewrite the code to be more modular and easier to read.
 - [ ] Add more options for generating types like prefixing, suffixing, etc.
 - [ ] Add support for static admin token authentication.
-- [x] Prevent empty system collection types from being generated.
 - [ ] Derive system fields from the Directus API.
+- [ ] Add support for JSON repeaters.
+- [ ] Tests
+
+## Caveats
+
+- **System Collections:** System collections are present in the generated types
+  but only contain ID fields and custom, user created fields. The IDs are
+  included to make sure the system collections are not empty. The SDK should
+  override the system fields with the correct types.
+- **JSON Repeaters:** JSON repeaters are not supported yet. There is no data
+  describing the structure of the repeater in the OpenAPI schema and are tyepd
+  as unknown
 
 ## Installation
 
