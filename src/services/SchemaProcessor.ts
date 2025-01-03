@@ -290,8 +290,38 @@ export class SchemaProcessor {
     propName: string,
     propSchema: OpenAPIV3.SchemaObject,
   ): string {
-    const type = propSchema.type === "integer" ? "number" : propSchema.type;
+    const baseType = propSchema.type === "integer" ? "number" : propSchema.type;
     const optional = "nullable" in propSchema && propSchema.nullable === true;
-    return `  ${propName}${optional ? "?" : ""}: ${type};\n`;
+
+    // Handle special string formats
+    if (baseType === "string" && "format" in propSchema) {
+      const format = propSchema.format;
+      if (
+        format === "date" ||
+        format === "time" ||
+        format === "date-time" ||
+        format === "timestamp"
+      ) {
+        return `  ${propName}${optional ? "?" : ""}: 'datetime';\n`;
+      }
+      if (format === "json") {
+        return `  ${propName}${optional ? "?" : ""}: 'json';\n`;
+      }
+      if (format === "csv") {
+        return `  ${propName}${optional ? "?" : ""}: 'csv';\n`;
+      }
+    }
+
+    // Handle object type as json
+    if (baseType === "object") {
+      return `  ${propName}${optional ? "?" : ""}: 'json';\n`;
+    }
+
+    // Handle array type as csv
+    if (baseType === "array") {
+      return `  ${propName}${optional ? "?" : ""}: 'csv';\n`;
+    }
+
+    return `  ${propName}${optional ? "?" : ""}: ${baseType};\n`;
   }
 }
