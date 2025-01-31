@@ -21,9 +21,9 @@ to post the first real working version.
 
 https://github.com/user-attachments/assets/5c1c0292-18d8-41c6-a621-ea1b45fd4099
 
-I am using a custom shell script to execute the `pnpm types` command. I will be
-writing about this soon on my blog at
-[https://jovianmoon.io](https://jovianmoon.io).
+I wrote a blog post about how I use a node script and npm command to integrate
+it into my projects. You can read about it here:
+[https://jovianmoon.io/posts/generating-typescript-types-from-directus](https://jovianmoon.io/posts/generating-typescript-types-from-directus).
 
 ## Features
 
