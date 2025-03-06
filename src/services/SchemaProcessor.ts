@@ -454,6 +454,20 @@ export class SchemaProcessor {
     isSystemCollection: boolean = false,
     parentTypeName: string = "",
   ): string {
+    // Special handling for user references that commonly cause recursion
+    if (
+      propName === "user_created" ||
+      propName === "user_updated" ||
+      propName === "user"
+    ) {
+      // For these fields, always use string | DirectusUsers without recursion checks
+      if (this.options.useTypeReferences && !isSystemCollection) {
+        return `  ${propName}?: string | DirectusUsers;\n`;
+      } else {
+        return `  ${propName}?: string;\n`;
+      }
+    }
+
     if (isReferenceObject(propSchema)) {
       return this.generateReferencePropertyDefinition(
         propName,
@@ -592,17 +606,21 @@ export class SchemaProcessor {
     const dependencies =
       this.typeCircularDependencies.get(typeName) || new Set();
 
-    // Replace recursive references with Omit<Type, never> to create proper recursion
+    // Replace recursive references with less drastic measures - use union with string
+    // instead of using Omit<Type, never> which results in 'never'
     let updatedBody = typeBody;
     for (const dependency of dependencies) {
       if (this.circularReferenceTypes.has(dependency)) {
-        // Replace reference in property definitions
-        const regex = new RegExp(`(\\b${dependency}\\b)(?!\\[])`, "g");
-        updatedBody = updatedBody.replace(regex, `Omit<$1, never>`);
+        // Replace reference in property definitions, keep string as an option
+        const regex = new RegExp(`(string \\| ${dependency})`, "g");
+        updatedBody = updatedBody.replace(regex, "string");
 
         // Replace array references
-        const arrayRegex = new RegExp(`Array<(${dependency})>`, "g");
-        updatedBody = updatedBody.replace(arrayRegex, `Array<Omit<$1, never>>`);
+        const arrayRegex = new RegExp(
+          `string\\[\\] \\| Array<${dependency}>`,
+          "g",
+        );
+        updatedBody = updatedBody.replace(arrayRegex, "string[]");
       }
     }
 
