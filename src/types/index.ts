@@ -9,6 +9,7 @@ export type ReadSpecFileOptions = {
 
 export type GenerateTypeScriptOptions = {
   readonly typeName: string;
+  useTypeReferences?: boolean;
 };
 
 export type TypeDefinition = {

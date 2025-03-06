@@ -247,8 +247,6 @@ export class SchemaProcessor {
     propName: string,
     propSchema: OpenAPIV3.SchemaObject,
   ): string {
-    // TODO: Improve type safety here
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const items = (propSchema as any).items as FieldItems;
     if (items.oneOf?.some((item) => item.$ref)) {
       const refIndex = items.oneOf.findIndex((item) => item.$ref);
@@ -258,7 +256,13 @@ export class SchemaProcessor {
         : refType !== "string"
           ? `Directus${refType}`
           : refType;
-      return `  ${propName}?: string[]${newRef !== "string" ? ` | ${newRef}[]` : ""};\n`;
+
+      // Add condition to handle references with type limitations
+      if (this.options.useTypeReferences && newRef !== "string") {
+        return `  ${propName}?: string[] | Array<{ id: string }>;\n`;
+      } else {
+        return `  ${propName}?: string[]${newRef !== "string" ? ` | ${newRef}[]` : ""};\n`;
+      }
     } else {
       if (items.type === "integer") {
         return `  ${propName}?: number[];\n`;
@@ -269,6 +273,7 @@ export class SchemaProcessor {
     }
   }
 
+  // In SchemaProcessor.ts:
   private generateIdPropertyDefinition(
     propName: string,
     propSchema: OpenAPIV3.SchemaObject,
@@ -283,7 +288,13 @@ export class SchemaProcessor {
     const refTypeExists = Object.keys(schemas).some(
       (schemaName) => schemaName === refType,
     );
-    return `  ${propName}?: string${refTypeExists ? ` | ${refType}` : ""};\n`;
+
+    // Add this if-else check to use type references when needed
+    if (this.options.useTypeReferences && refTypeExists) {
+      return `  ${propName}?: string | { id: string };\n`;
+    } else {
+      return `  ${propName}?: string${refTypeExists ? ` | ${refType}` : ""};\n`;
+    }
   }
 
   private generateBasicPropertyDefinition(
