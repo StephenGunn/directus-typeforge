@@ -208,11 +208,11 @@ export class SchemaProcessor {
             id: {
               type:
                 shortName === "permissions" ||
-                shortName === "activity" ||
-                shortName === "presets" ||
-                shortName === "revisions" ||
-                shortName === "webhooks" ||
-                shortName === "settings"
+                  shortName === "activity" ||
+                  shortName === "presets" ||
+                  shortName === "revisions" ||
+                  shortName === "webhooks" ||
+                  shortName === "settings"
                   ? "integer"
                   : "string",
             },
@@ -425,7 +425,7 @@ export class SchemaProcessor {
 
     // Then create the main schema type
     if (validCollections.length > 0) {
-      source += `\nexport type ${this.options.typeName} = {\n`;
+      source += `\nexport interface ${this.options.typeName} {\n`;
 
       // First add non-system collections (as arrays)
       const nonSystemCollections = validCollections.filter(
@@ -519,13 +519,13 @@ export class SchemaProcessor {
 
         // Adjust for system collections
         if (refTypeName === "Users") {
-          refTypeName = "DirectusUsers";
+          refTypeName = "CustomDirectusUsers";
         } else if (refTypeName === "Files") {
-          refTypeName = "DirectusFiles";
+          refTypeName = "CustomDirectusFiles";
         } else if (refTypeName === "Folders") {
-          refTypeName = "DirectusFolders";
+          refTypeName = "CustomDirectusFolders";
         } else if (refTypeName === "Roles") {
-          refTypeName = "DirectusRoles";
+          refTypeName = "CustomDirectusRoles";
         } else {
           // For other potential system collections
           const systemTypeName = this.getSystemCollectionTypeName(refTypeName);
@@ -561,9 +561,9 @@ export class SchemaProcessor {
 
         // Adjust for system collections
         if (refTypeName === "Users") {
-          refTypeName = "DirectusUsers";
+          refTypeName = "CustomDirectusUsers";
         } else if (refTypeName === "Files") {
-          refTypeName = "DirectusFiles";
+          refTypeName = "CustomDirectusFiles";
         } else {
           // For other potential system collections
           const systemTypeName = this.getSystemCollectionTypeName(refTypeName);
@@ -594,9 +594,9 @@ export class SchemaProcessor {
 
           // Adjust for system collections
           if (refTypeName === "Users") {
-            refTypeName = "DirectusUsers";
+            refTypeName = "CustomDirectusUsers";
           } else if (refTypeName === "Files") {
-            refTypeName = "DirectusFiles";
+            refTypeName = "CustomDirectusFiles";
           } else {
             // For other potential system collections
             const systemTypeName =
