@@ -31,8 +31,12 @@ export async function generateTypeScript(
     // Write spec to temporary file
     await writeFile(tempFilePath, JSON.stringify(spec), { encoding: "utf-8" });
 
-    // Process schema and generate types
-    const processor = new SchemaProcessor(spec, options);
+    // Process schema and generate types with defaults for missing options
+    const processor = new SchemaProcessor(spec, {
+      typeName: options.typeName,
+      useTypeReferences: options.useTypeReferences ?? true,
+    });
+
     const source = processor.processSchema();
 
     return source;

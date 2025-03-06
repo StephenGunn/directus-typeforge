@@ -58,6 +58,27 @@ export class TypeTracker {
   }
 
   /**
+   * Gets only the content string for a type
+   */
+  getTypeContent(name: string): string {
+    return this.types.get(name)?.content || "";
+  }
+
+  /**
+   * Checks if a type exists
+   */
+  hasType(name: string): boolean {
+    return this.types.has(name);
+  }
+
+  /**
+   * Gets all type names
+   */
+  getAllTypeNames(): string[] {
+    return Array.from(this.types.keys());
+  }
+
+  /**
    * Clears all tracked types
    */
   clear(): void {

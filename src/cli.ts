@@ -2,15 +2,15 @@
 
 import yargs from "yargs";
 import { hideBin } from "yargs/helpers";
-import { readSpecFile, generateTypeScript } from "./index.js"; // Adjust the import path as needed
+import { readSpecFile, generateTypeScript } from "./index.js";
 import fs from "fs/promises";
 import { resolve } from "path";
-import type { OpenAPI3 } from "openapi-typescript"; // Adjust if necessary
+import ora from "ora";
 
 // Initialize yargs with hideBin to process command-line arguments
 const main = async (): Promise<void> => {
   const argv = await yargs(hideBin(process.argv))
-    .scriptName("directus-typeforge") // Set script name for help messages
+    .scriptName("directus-typeforge")
     .usage("$0 [options]")
     .option("specFile", {
       alias: "i",
@@ -41,20 +41,7 @@ const main = async (): Promise<void> => {
       alias: "t",
       type: "string",
       description: "Root type name",
-      default: "Schema",
-    })
-    .option("includeSystemCollections", {
-      alias: "s",
-      type: "boolean",
-      description: "Include system collections",
-      default: false,
-    })
-    .option("maxNestedDepth", {
-      alias: "d",
-      type: "number",
-      description:
-        "Maximum depth for nested relation types (prevents recursion)",
-      default: 2,
+      default: "ApiCollections",
     })
     .option("useTypeReferences", {
       alias: "r",
@@ -74,30 +61,44 @@ const main = async (): Promise<void> => {
         "Either --specFile (-i) must be provided or --host (-h), --email (-e), and --password (-p) must all be specified.",
       );
     })
+    .example(
+      "$0 -i ./directus.oas.json -o ./types/schema.d.ts",
+      "Generate types from a spec file",
+    )
+    .example(
+      "$0 -h https://example.com -e admin@example.com -p password -o ./types/schema.d.ts",
+      "Generate types from a live Directus server",
+    )
     .strict()
     .help()
     .parseAsync();
 
   try {
+    const spinner = ora("Processing Directus schema...").start();
+
     // Read the OpenAPI spec
-    // @ts-expect-error: The specFile option is required
-    const spec: OpenAPI3 = await readSpecFile(argv);
+    spinner.text = "Reading OpenAPI schema...";
+    const spec = await readSpecFile({
+      specFile: argv.specFile,
+      host: argv.host,
+      email: argv.email,
+      password: argv.password,
+    });
 
     // Generate TypeScript types
-    // @ts-expect-error: The typeName option is required
-    const ts: string = await generateTypeScript(spec, {
-      includeSystemCollections: argv.includeSystemCollections,
+    spinner.text = "Generating TypeScript types...";
+    const ts = await generateTypeScript(spec, {
       typeName: argv.typeName,
       useTypeReferences: argv.useTypeReferences,
-      maxNestedDepth: argv.maxNestedDepth,
     });
 
     // Output the generated types
     if (typeof argv.outFile === "string") {
       const outPath = resolve(process.cwd(), argv.outFile);
       await fs.writeFile(outPath, ts, "utf-8");
-      console.log(`TypeScript types have been written to ${outPath}`);
+      spinner.succeed(`TypeScript types have been written to ${outPath}`);
     } else {
+      spinner.stop();
       console.log(ts);
     }
   } catch (error: unknown) {
