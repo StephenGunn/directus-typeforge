@@ -30,7 +30,7 @@ export const hasRef = (obj: unknown): obj is { $ref: string } => {
     typeof obj === "object" &&
     obj !== null &&
     "$ref" in obj &&
-    typeof (obj as any).$ref === "string"
+    typeof (obj as Record<string, unknown>).$ref === "string"
   );
 };
 

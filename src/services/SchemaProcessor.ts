@@ -160,7 +160,7 @@ export class SchemaProcessor {
     // Handle oneOf case - check safely if oneOf exists and is an array
     if ("oneOf" in propSchema && Array.isArray(propSchema.oneOf)) {
       const schemaWithOneOf = propSchema as OpenAPIV3.SchemaObject & {
-        oneOf: any[];
+        oneOf: Array<unknown>;
       };
       return this.generateOneOfPropertyDefinition(
         propName,
