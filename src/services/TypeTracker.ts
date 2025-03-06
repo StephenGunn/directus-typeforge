@@ -14,17 +14,15 @@ export class TypeTracker {
    * Adds a type definition to the tracker
    */
   addType(name: string, content: string, properties: string[]) {
-    // Add default id field for Directus types if they're empty
-    const isDirectusType = name.startsWith("Directus");
-    if (isDirectusType && properties.length === 0) {
-      // Most Directus types use string IDs except for specific cases
-      const idType =
-        name === "DirectusPermissions" || name === "DirectusOperations"
-          ? "number"
-          : "string";
+    // For regular collections with no properties, add default id field
+    if (properties.length === 0 && !name.startsWith("Directus")) {
+      const idType = "string";
       properties = ["id"];
       content = `export type ${name} = {\n  id: ${idType};\n};\n\n`;
     }
+
+    // For system collections, we'll keep whatever properties they have
+    // Even if empty, it's useful for typing
     this.types.set(name, { content, properties });
   }
 
@@ -33,6 +31,13 @@ export class TypeTracker {
    */
   hasValidContent(name: string): boolean {
     const type = this.types.get(name);
+
+    // For system collections, they're valid even with no properties
+    if (name.startsWith("Directus")) {
+      return type !== undefined;
+    }
+
+    // For regular types, they need properties
     return type !== undefined && type.properties.length > 0;
   }
 

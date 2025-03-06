@@ -11,8 +11,6 @@ import {
   extractRefFromPathItem,
   findSystemCollections,
   isReferenceObject,
-  isArraySchema,
-  hasRef,
 } from "../utils/schema";
 
 /**
@@ -22,15 +20,11 @@ export class SchemaProcessor {
   private spec: OpenAPIV3.Document;
   private typeTracker: TypeTracker;
   private options: GenerateTypeScriptOptions;
-  private MAX_NESTING_DEPTH = 2; // Control the maximum nesting depth for references
 
   constructor(spec: OpenAPIV3.Document, options: GenerateTypeScriptOptions) {
     this.spec = spec;
     this.typeTracker = new TypeTracker();
-    this.options = {
-      ...options,
-      maxNestedDepth: options.maxNestedDepth ?? this.MAX_NESTING_DEPTH,
-    };
+    this.options = options;
   }
 
   /**
@@ -75,7 +69,14 @@ export class SchemaProcessor {
       const schema = (this.spec.components?.schemas?.[ref] ??
         {}) as OpenAPIV3.SchemaObject;
       const refName = toPascalCase(ref);
-      this.generateSDKInterface(schema, refName, collection);
+
+      // For system collections, we'll only include custom fields
+      if (collection.startsWith("directus_")) {
+        this.generateSystemCollectionFields(schema, collection);
+      } else {
+        this.generateSDKInterface(schema, refName, collection);
+      }
+
       if (this.typeTracker.hasValidContent(refName)) {
         schemas[collection] = { ref, schema };
       }
@@ -98,13 +99,48 @@ export class SchemaProcessor {
       ) as OpenAPIV3.SchemaObject;
 
       if (schema) {
+        this.generateSystemCollectionFields(schema, collection);
+
         const refName = toPascalCase(collection);
-        this.generateSDKInterface(schema, refName, collection);
         if (this.typeTracker.hasValidContent(refName)) {
           schemas[collection] = { ref: collection, schema };
         }
       }
     }
+  }
+
+  /**
+   * Generates interface for system collection's custom fields
+   */
+  private generateSystemCollectionFields(
+    schema: OpenAPIV3.SchemaObject,
+    collection: string,
+  ): void {
+    if (!schema.properties) return;
+
+    // Get only non-system fields for the system collection
+    const customFields = Object.entries(schema.properties).filter(
+      ([propName]) => !this.isSystemField(propName, collection),
+    );
+
+    if (customFields.length === 0) {
+      // No custom fields
+      return;
+    }
+
+    // Use the collection name directly for type naming
+    const typeName = toPascalCase(collection);
+    let interfaceStr = `export type ${typeName} = {\n`;
+    const properties: string[] = [];
+
+    for (const [propName, propSchema] of customFields) {
+      if (typeof propSchema !== "object") continue;
+      properties.push(propName);
+      interfaceStr += this.generatePropertyDefinition(propName, propSchema);
+    }
+
+    interfaceStr += "};\n\n";
+    this.typeTracker.addType(typeName, interfaceStr, properties);
   }
 
   /**
@@ -130,7 +166,7 @@ export class SchemaProcessor {
       if (typeof propSchema !== "object") continue;
       properties.push(propName);
 
-      interfaceStr += this.generatePropertyDefinition(propName, propSchema, 0);
+      interfaceStr += this.generatePropertyDefinition(propName, propSchema);
     }
 
     interfaceStr += "};\n\n";
@@ -143,54 +179,26 @@ export class SchemaProcessor {
   private generatePropertyDefinition(
     propName: string,
     propSchema: OpenAPIV3.SchemaObject | OpenAPIV3.ReferenceObject,
-    nestingDepth: number,
   ): string {
-    // Check if we've reached the max nesting depth
-    const atMaxDepth = nestingDepth >= this.options.maxNestedDepth!;
-
-    // Check if it's a reference object
     if (isReferenceObject(propSchema)) {
-      return this.generateReferencePropertyDefinition(
-        propName,
-        propSchema,
-        atMaxDepth,
-      );
+      return this.generateReferencePropertyDefinition(propName);
     }
 
-    // Handle oneOf case - check safely if oneOf exists and is an array
-    if ("oneOf" in propSchema && Array.isArray(propSchema.oneOf)) {
-      const schemaWithOneOf = propSchema as OpenAPIV3.SchemaObject & {
-        oneOf: Array<unknown>;
-      };
-      return this.generateOneOfPropertyDefinition(
-        propName,
-        schemaWithOneOf,
-        atMaxDepth,
-      );
+    if ("oneOf" in propSchema) {
+      return this.generateOneOfPropertyDefinition(propName, propSchema);
     }
 
-    // Handle array case
-    if (isArraySchema(propSchema)) {
+    if (propSchema.type === "array" && "items" in propSchema) {
       return this.generateArrayPropertyDefinition(
         propName,
-        propSchema,
-        nestingDepth,
+        propSchema as OpenAPIV3.ArraySchemaObject,
       );
     }
 
-    // Handle id fields (relations)
-    if (
-      (propName.endsWith("_id") || propName === "item") &&
-      propSchema.type === "string"
-    ) {
-      return this.generateIdPropertyDefinition(
-        propName,
-        propSchema,
-        atMaxDepth,
-      );
+    if (propName.endsWith("_id") || propName === "item") {
+      return this.generateIdPropertyDefinition(propName, propSchema);
     }
 
-    // Handle basic types
     return this.generateBasicPropertyDefinition(propName, propSchema);
   }
 
@@ -223,11 +231,17 @@ export class SchemaProcessor {
     if (validCollections.length > 0) {
       source += `\nexport type ${this.options.typeName} = {\n`;
       for (const [collectionName, { ref }] of validCollections) {
-        const pascalCaseName = toPascalCase(ref);
         const schema = (this.spec.components?.schemas?.[ref] ??
           {}) as ExtendedSchemaObject;
         const isSingleton = !!schema?.["x-singleton"];
-        source += `  ${collectionName}: ${pascalCaseName}${isSingleton ? "" : "[]"};\n`;
+        const pascalCaseName = toPascalCase(ref);
+
+        // System collections are not arrays
+        if (collectionName.startsWith("directus_")) {
+          source += `  ${collectionName}: ${pascalCaseName};\n`;
+        } else {
+          source += `  ${collectionName}: ${pascalCaseName}${isSingleton ? "" : "[]"};\n`;
+        }
       }
       source += `};\n\n`;
     }
@@ -236,78 +250,49 @@ export class SchemaProcessor {
     return source.replace(/\| \{\}\[\]/g, "");
   }
 
-  /**
-   * Generate property definition for a reference
-   */
-  private generateReferencePropertyDefinition(
-    propName: string,
-    propSchema: OpenAPIV3.ReferenceObject,
-    atMaxDepth: boolean,
-  ): string {
-    const refType = this.getRefType(propSchema.$ref);
-    return `  ${propName}?: ${atMaxDepth ? "string" : refType};\n`;
+  private generateReferencePropertyDefinition(propName: string): string {
+    // We're simply using string type for references
+    return `  ${propName}?: string;\n`;
   }
 
-  /**
-   * Generate property definition for a oneOf schema
-   */
   private generateOneOfPropertyDefinition(
     propName: string,
-    propSchema: OpenAPIV3.SchemaObject & { oneOf: Array<unknown> },
-    atMaxDepth: boolean,
+    propSchema: OpenAPIV3.SchemaObject,
   ): string {
-    // Find an item with a $ref in the oneOf array
-    const refItem = propSchema.oneOf.find((item) => hasRef(item));
+    // Find a $ref in the oneOf array
+    const refItem = propSchema.oneOf?.find((item) => "$ref" in item);
 
-    if (refItem && hasRef(refItem)) {
-      const refType = this.getRefType(refItem.$ref);
-      // If at max depth, only show string type, not the reference
-      return `  ${propName}?: string${atMaxDepth ? "" : refType !== "string" ? ` | ${refType}` : ""};\n`;
+    if (refItem && "$ref" in refItem) {
+      return `  ${propName}?: string;\n`;
     }
 
     return `  ${propName}?: unknown;\n`;
   }
 
-  /**
-   * Generate property definition for an array schema
-   */
   private generateArrayPropertyDefinition(
     propName: string,
     propSchema: OpenAPIV3.ArraySchemaObject,
-    nestingDepth: number,
   ): string {
-    const newNestingDepth = nestingDepth + 1;
-    const atMaxDepth = newNestingDepth >= this.options.maxNestedDepth!;
-
-    // Handle items - check if it's a reference object
+    // Handle arrays of references
     if (isReferenceObject(propSchema.items)) {
-      const refType = this.getRefType(propSchema.items.$ref);
-      return `  ${propName}?: string[]${atMaxDepth ? "" : refType !== "string" ? ` | ${refType}[]` : ""};\n`;
+      return `  ${propName}?: string[];\n`;
     }
 
-    // Handle items with oneOf
+    // Handle arrays with oneOf
     if ("oneOf" in propSchema.items && Array.isArray(propSchema.items.oneOf)) {
-      const refItem = propSchema.items.oneOf.find((item) => hasRef(item));
+      const refItem = propSchema.items.oneOf.find((item) => "$ref" in item);
 
-      if (refItem && hasRef(refItem)) {
-        const refType = this.getRefType(refItem.$ref);
-        const newRef = refType.includes("Items")
-          ? refType
-          : refType !== "string"
-            ? `Directus${refType}`
-            : refType;
-
-        // Use type references if option is enabled
-        if (this.options.useTypeReferences && newRef !== "string") {
+      if (refItem && "$ref" in refItem) {
+        // For arrays of items, we'll use string[] or object references
+        if (this.options.useTypeReferences) {
           return `  ${propName}?: string[] | Array<{ id: string }>;\n`;
         } else {
-          // If at max depth, only show string[] type
-          return `  ${propName}?: string[]${atMaxDepth ? "" : newRef !== "string" ? ` | ${newRef}[]` : ""};\n`;
+          return `  ${propName}?: string[];\n`;
         }
       }
     }
 
-    // Handle based on item type
+    // Handle simple array types
     if ("type" in propSchema.items) {
       if (propSchema.items.type === "integer") {
         return `  ${propName}?: number[];\n`;
@@ -319,37 +304,22 @@ export class SchemaProcessor {
     return `  ${propName}?: unknown[];\n`;
   }
 
-  /**
-   * Generate property definition for an ID field (relation)
-   */
   private generateIdPropertyDefinition(
     propName: string,
     propSchema: OpenAPIV3.SchemaObject,
-    atMaxDepth: boolean,
   ): string {
     if (propName === "item") {
       return `  ${propName}?: ${propSchema.type ?? "unknown"};\n`;
     }
 
-    const refCollectionName = propName.replace(/_id$/, "");
-    const refType = toPascalCase(refCollectionName);
-    const schemas = this.spec.components?.schemas ?? {};
-    const refTypeExists = Object.keys(schemas).some(
-      (schemaName) => schemaName === refType,
-    );
-
-    // Use type references if option is enabled
-    if (this.options.useTypeReferences && refTypeExists) {
+    // For ID fields that reference other collections
+    if (this.options.useTypeReferences) {
       return `  ${propName}?: string | { id: string };\n`;
     } else {
-      // If at max depth, only show string type
-      return `  ${propName}?: string${atMaxDepth ? "" : refTypeExists ? ` | ${refType}` : ""};\n`;
+      return `  ${propName}?: string;\n`;
     }
   }
 
-  /**
-   * Generate property definition for basic type (string, number, etc.)
-   */
   private generateBasicPropertyDefinition(
     propName: string,
     propSchema: OpenAPIV3.SchemaObject,
@@ -366,59 +336,26 @@ export class SchemaProcessor {
         format === "date-time" ||
         format === "timestamp"
       ) {
-        return `  ${propName}${optional ? "?" : ""}: 'datetime';\n`;
+        return `  ${propName}${optional ? "?" : ""}: string;\n`;
       }
       if (format === "json") {
-        return `  ${propName}${optional ? "?" : ""}: 'json';\n`;
+        return `  ${propName}${optional ? "?" : ""}: unknown;\n`;
       }
       if (format === "csv") {
-        return `  ${propName}${optional ? "?" : ""}: 'csv';\n`;
+        return `  ${propName}${optional ? "?" : ""}: string;\n`;
       }
     }
 
-    // Handle object type as json
+    // Handle object type
     if (baseType === "object") {
-      return `  ${propName}${optional ? "?" : ""}: 'json';\n`;
+      return `  ${propName}${optional ? "?" : ""}: Record<string, unknown>;\n`;
     }
 
-    // Handle array type as csv
+    // Handle array type
     if (baseType === "array") {
-      return `  ${propName}${optional ? "?" : ""}: 'csv';\n`;
+      return `  ${propName}${optional ? "?" : ""}: unknown[];\n`;
     }
 
-    return `  ${propName}${optional ? "?" : ""}: ${baseType};\n`;
-  }
-
-  /**
-   * Get normalized reference type from a $ref string
-   */
-  private getRefType(ref: string): string {
-    if (ref.startsWith("#/components/schemas/")) {
-      const type = ref.split("/").pop() as string;
-      const schemas = this.spec.components?.schemas;
-      const exists = schemas && type in schemas;
-
-      if (!exists) return "string";
-
-      // Map common Directus types
-      return type === "Users"
-        ? "DirectusUsers"
-        : type === "Files"
-          ? "DirectusFiles"
-          : type === "Roles"
-            ? "DirectusRoles"
-            : type === "Fields"
-              ? "DirectusFields"
-              : type === "Collections"
-                ? "DirectusCollections"
-                : type === "Operations"
-                  ? "DirectusOperations"
-                  : type === "Flows"
-                    ? "DirectusFlows"
-                    : type === "Versions"
-                      ? "DirectusVersions"
-                      : type;
-    }
-    return "string";
+    return `  ${propName}${optional ? "?" : ""}: ${baseType ?? "unknown"};\n`;
   }
 }
