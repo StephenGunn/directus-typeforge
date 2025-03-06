@@ -41,24 +41,24 @@ export class SchemaProcessor {
    */
   private initializeSystemCollectionMap(): void {
     // Map standard Directus system collections to their Type names
-    this.systemCollectionMap.set("users", "DirectusUsers");
-    this.systemCollectionMap.set("files", "DirectusFiles");
-    this.systemCollectionMap.set("folders", "DirectusFolders");
-    this.systemCollectionMap.set("roles", "DirectusRoles");
-    this.systemCollectionMap.set("activity", "DirectusActivity");
-    this.systemCollectionMap.set("permissions", "DirectusPermissions");
-    this.systemCollectionMap.set("fields", "DirectusFields");
-    this.systemCollectionMap.set("collections", "DirectusCollections");
-    this.systemCollectionMap.set("presets", "DirectusPresets");
-    this.systemCollectionMap.set("relations", "DirectusRelations");
-    this.systemCollectionMap.set("revisions", "DirectusRevisions");
-    this.systemCollectionMap.set("webhooks", "DirectusWebhooks");
-    this.systemCollectionMap.set("flows", "DirectusFlows");
-    this.systemCollectionMap.set("operations", "DirectusOperations");
-    this.systemCollectionMap.set("versions", "DirectusVersions");
-    this.systemCollectionMap.set("extensions", "DirectusExtensions");
-    this.systemCollectionMap.set("comments", "DirectusComments");
-    this.systemCollectionMap.set("settings", "DirectusSettings");
+    this.systemCollectionMap.set("users", "CustomDirectusUsers");
+    this.systemCollectionMap.set("files", "CustomDirectusFiles");
+    this.systemCollectionMap.set("folders", "CustomDirectusFolders");
+    this.systemCollectionMap.set("roles", "CustomDirectusRoles");
+    this.systemCollectionMap.set("activity", "CustomDirectusActivity");
+    this.systemCollectionMap.set("permissions", "CustomDirectusPermissions");
+    this.systemCollectionMap.set("fields", "CustomDirectusFields");
+    this.systemCollectionMap.set("collections", "CustomDirectusCollections");
+    this.systemCollectionMap.set("presets", "CustomDirectusPresets");
+    this.systemCollectionMap.set("relations", "CustomDirectusRelations");
+    this.systemCollectionMap.set("revisions", "CustomDirectusRevisions");
+    this.systemCollectionMap.set("webhooks", "CustomDirectusWebhooks");
+    this.systemCollectionMap.set("flows", "CustomDirectusFlows");
+    this.systemCollectionMap.set("operations", "CustomDirectusOperations");
+    this.systemCollectionMap.set("versions", "CustomDirectusVersions");
+    this.systemCollectionMap.set("extensions", "CustomDirectusExtensions");
+    this.systemCollectionMap.set("comments", "CustomDirectusComments");
+    this.systemCollectionMap.set("settings", "CustomDirectusSettings");
   }
 
   /**
@@ -208,11 +208,11 @@ export class SchemaProcessor {
             id: {
               type:
                 shortName === "permissions" ||
-                  shortName === "activity" ||
-                  shortName === "presets" ||
-                  shortName === "revisions" ||
-                  shortName === "webhooks" ||
-                  shortName === "settings"
+                shortName === "activity" ||
+                shortName === "presets" ||
+                shortName === "revisions" ||
+                shortName === "webhooks" ||
+                shortName === "settings"
                   ? "integer"
                   : "string",
             },
@@ -350,7 +350,7 @@ export class SchemaProcessor {
     ) {
       // For these fields, always use string | DirectusUsers
       if (this.options.useTypeReferences && !isSystemCollection) {
-        return `  ${propName}?: string | DirectusUsers;\n`;
+        return `  ${propName}?: string | CustomDirectusUsers;\n`;
       } else {
         return `  ${propName}?: string;\n`;
       }
@@ -474,13 +474,13 @@ export class SchemaProcessor {
 
     // Check if the reference is to a system collection and use the correct name
     if (refTypeName === "Users") {
-      refTypeName = "DirectusUsers";
+      refTypeName = "CustomDirectusUsers";
     } else if (refTypeName === "Files") {
-      refTypeName = "DirectusFiles";
+      refTypeName = "CustomDirectusFiles";
     } else if (refTypeName === "Folders") {
-      refTypeName = "DirectusFolders";
+      refTypeName = "CustomDirectusFolders";
     } else if (refTypeName === "Roles") {
-      refTypeName = "DirectusRoles";
+      refTypeName = "CustomDirectusRoles";
     } else {
       // For other potential system collections
       const systemTypeName = this.getSystemCollectionTypeName(refTypeName);
