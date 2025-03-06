@@ -32,10 +32,13 @@ it into my projects. You can read about it here:
 - **System Collections:** Optionally include Directus system collections.
 - **Relationships:** Seamlessly represent collection relationships.
 - **Configurable Output:** Set custom root type names and output file paths.
+- **Recursion Control:** Prevent infinite type loops with configurable nesting
+  depth.
 
 ## Todo
 
 - [x] Prevent empty system collection types from being generated.
+- [x] Prevent recursive type loops with configurable depth control.
 - [ ] Rewrite the code to be more modular and easier to read.
 - [ ] Add more options for generating types like prefixing, suffixing, etc.
 - [ ] Add support for static admin token authentication.
@@ -95,6 +98,26 @@ npx directus-typeforge --host https://example.com --email user@example.com --pas
 npx directus-typeforge -i directus.oas.json --typeName MySchema > schema.d.ts
 ```
 
+### Control Relationship Nesting Depth
+
+```bash
+npx directus-typeforge -i directus.oas.json --maxNestedDepth 1 > schema.d.ts
+```
+
+## Available Options
+
+| Option                       | Alias | Description                                 | Default  |
+| ---------------------------- | ----- | ------------------------------------------- | -------- |
+| `--specFile`                 | `-i`  | Path to OpenAPI spec file                   | -        |
+| `--host`                     | `-h`  | Directus host URL                           | -        |
+| `--email`                    | `-e`  | Email for authentication                    | -        |
+| `--password`                 | `-p`  | Password for authentication                 | -        |
+| `--outFile`                  | `-o`  | Output file for TypeScript types            | -        |
+| `--typeName`                 | `-t`  | Root type name                              | `Schema` |
+| `--includeSystemCollections` | `-s`  | Include system collections                  | `false`  |
+| `--maxNestedDepth`           | `-d`  | Maximum depth for nested relation types     | `2`      |
+| `--useTypeReferences`        | `-r`  | Use interface references for relation types | `true`   |
+
 ## Expected Output
 
 ```typescript
@@ -147,6 +170,29 @@ export const initDirectus = () => {
   return createDirectus<ApiCollections>(DIRECTUS_URL).with(rest());
 };
 ```
+
+## Preventing Recursive Type Loops
+
+When working with related collections in Directus, it's common to encounter
+circular references. For example, a `user` might be related to an `event_staff`
+entry, which is related to an `event`, which has `event_registrations` that
+relate back to `users`.
+
+This can cause TypeScript to generate infinitely recursive types. To prevent
+this, DirectusTypeForge implements a `maxNestedDepth` option that limits how
+deep these relationships go.
+
+By default, this is set to `2`, meaning relationship types will be expanded two
+levels deep, and then only include the string ID representation. You can adjust
+this value based on your needs:
+
+- Lower values (e.g., `1`) result in simpler types with less nesting
+- Higher values provide more type information for deeply nested queries
+- Values too high might cause TypeScript to hit compiler limits or make types
+  difficult to read
+
+For most use cases, the default value of `2` provides a good balance of type
+safety and usability.
 
 ## License
 

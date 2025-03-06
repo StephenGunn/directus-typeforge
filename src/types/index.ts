@@ -10,6 +10,7 @@ export type ReadSpecFileOptions = {
 export type GenerateTypeScriptOptions = {
   readonly typeName: string;
   useTypeReferences?: boolean;
+  maxNestedDepth?: number; // Limit recursion depth for nested relation types
 };
 
 export type TypeDefinition = {

@@ -23,6 +23,18 @@ export const isArraySchema = (
 };
 
 /**
+ * Type guard to check if an object has a $ref property
+ */
+export const hasRef = (obj: unknown): obj is { $ref: string } => {
+  return (
+    typeof obj === "object" &&
+    obj !== null &&
+    "$ref" in obj &&
+    typeof (obj as any).$ref === "string"
+  );
+};
+
+/**
  * Extracts reference from a path item
  */
 export const extractRefFromPathItem = (

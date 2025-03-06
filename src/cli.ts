@@ -7,26 +7,6 @@ import fs from "fs/promises";
 import { resolve } from "path";
 import type { OpenAPI3 } from "openapi-typescript"; // Adjust if necessary
 
-// Define the shape of the options object based on your ReadSpecFileOptions type
-//interface ReadSpecFileOptions {
-//  specFile?: string;
-//  host?: string;
-//  email?: string;
-//  password?: string;
-//}
-//
-//// Define the shape of the argv object based on your GenerateTypeScriptOptions type
-//interface GenerateTypeScriptOptions {
-//  includeSystemCollections?: boolean;
-//  typeName: string;
-//}
-//
-// Combine all options into a single type
-//type CLIOptions = ReadSpecFileOptions &
-//  GenerateTypeScriptOptions & {
-//    outFile?: string;
-//  };
-
 // Initialize yargs with hideBin to process command-line arguments
 const main = async (): Promise<void> => {
   const argv = await yargs(hideBin(process.argv))
@@ -63,6 +43,25 @@ const main = async (): Promise<void> => {
       description: "Root type name",
       default: "Schema",
     })
+    .option("includeSystemCollections", {
+      alias: "s",
+      type: "boolean",
+      description: "Include system collections",
+      default: false,
+    })
+    .option("maxNestedDepth", {
+      alias: "d",
+      type: "number",
+      description:
+        "Maximum depth for nested relation types (prevents recursion)",
+      default: 2,
+    })
+    .option("useTypeReferences", {
+      alias: "r",
+      type: "boolean",
+      description: "Use interface references for relation types",
+      default: true,
+    })
     .check((argv) => {
       if (argv.specFile) {
         // If specFile is provided, host, email, and password are not required
@@ -89,7 +88,8 @@ const main = async (): Promise<void> => {
     const ts: string = await generateTypeScript(spec, {
       includeSystemCollections: argv.includeSystemCollections,
       typeName: argv.typeName,
-      useTypeReferences: true,
+      useTypeReferences: argv.useTypeReferences,
+      maxNestedDepth: argv.maxNestedDepth,
     });
 
     // Output the generated types
