@@ -1,7 +1,7 @@
 import type { TypeDefinition } from "../types";
 
 /**
- * Tracks and manages type definitions during the generation process
+ * Tracks and manages interface definitions during the generation process
  */
 export class TypeTracker {
   private types: Map<string, TypeDefinition>;
@@ -18,11 +18,20 @@ export class TypeTracker {
     if (properties.length === 0 && !name.startsWith("Directus")) {
       const idType = "string";
       properties = ["id"];
-      content = `export type ${name} = {\n  id: ${idType};\n};\n\n`;
+      content = `export interface ${name} {\n  id: ${idType};\n}\n\n`;
     }
 
-    // For system collections, we'll keep whatever properties they have
-    // Even if empty, it's useful for typing
+    // For system collections that start with Directus prefix
+    if (name.startsWith("Directus") && properties.length === 0) {
+      // Add a default id property if none exists
+      const idType =
+        name === "DirectusPermissions" || name === "DirectusOperations"
+          ? "number"
+          : "string";
+      properties = ["id"];
+      content = `export interface ${name} {\n  id: ${idType};\n}\n\n`;
+    }
+
     this.types.set(name, { content, properties });
   }
 
@@ -32,7 +41,7 @@ export class TypeTracker {
   hasValidContent(name: string): boolean {
     const type = this.types.get(name);
 
-    // For system collections, they're valid even with no properties
+    // For system collections, they're valid even with just an ID
     if (name.startsWith("Directus")) {
       return type !== undefined;
     }
@@ -76,6 +85,27 @@ export class TypeTracker {
    */
   getAllTypeNames(): string[] {
     return Array.from(this.types.keys());
+  }
+
+  /**
+   * Updates an existing type definition
+   */
+  updateType(
+    name: string,
+    content: string,
+    properties: string[] = [],
+  ): boolean {
+    if (!this.types.has(name)) {
+      return false;
+    }
+
+    // If no properties are provided, keep the existing ones
+    if (properties.length === 0) {
+      properties = this.types.get(name)?.properties || [];
+    }
+
+    this.types.set(name, { content, properties });
+    return true;
   }
 
   /**

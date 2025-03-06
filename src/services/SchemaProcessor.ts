@@ -11,18 +11,17 @@ import {
   extractRefFromPathItem,
   findSystemCollections,
   isReferenceObject,
+  isArraySchema,
 } from "../utils/schema";
 
 /**
- * Processes OpenAPI schemas and generates TypeScript types
+ * Processes OpenAPI schemas and generates TypeScript interfaces
  */
 export class SchemaProcessor {
   private spec: OpenAPIV3.Document;
   private typeTracker: TypeTracker;
   private options: GenerateTypeScriptOptions;
   private processedTypes: Set<string> = new Set();
-  private typeCircularDependencies: Map<string, Set<string>> = new Map();
-  private circularReferenceTypes: Set<string> = new Set();
   private systemCollectionMap: Map<string, string> = new Map();
 
   constructor(spec: OpenAPIV3.Document, options: GenerateTypeScriptOptions) {
@@ -91,13 +90,10 @@ export class SchemaProcessor {
    * Processes the schema and generates TypeScript definitions
    */
   processSchema(): string {
-    // First pass - collect all schemas and build dependency graph
+    // Collect all schemas and process them
     const collectionSchemas = this.collectSchemas();
 
-    // Second pass - detect circular dependencies
-    this.detectCircularDependencies(collectionSchemas);
-
-    // Third pass - generate types with proper recursion handling
+    // Generate the final type definitions
     return this.generateTypeDefinitions(collectionSchemas);
   }
 
@@ -116,112 +112,6 @@ export class SchemaProcessor {
     this.processSystemCollections(schemas);
 
     return schemas;
-  }
-
-  /**
-   * Detects circular dependencies between types
-   */
-  private detectCircularDependencies(
-    schemas: Record<string, CollectionSchema>,
-  ): void {
-    // Build the dependency graph for all types
-    for (const [, { ref }] of Object.entries(schemas)) {
-      const typeName = toPascalCase(ref);
-      const dependencies = this.findTypeDependencies(typeName);
-      this.typeCircularDependencies.set(typeName, dependencies);
-    }
-
-    // Find circular references using depth-first search
-    for (const typeName of this.typeCircularDependencies.keys()) {
-      this.findCircularReferences(typeName, new Set());
-    }
-  }
-
-  /**
-   * Finds type dependencies
-   */
-  private findTypeDependencies(typeName: string): Set<string> {
-    const dependencies = new Set<string>();
-    const typeDefinition = this.typeTracker.getType(typeName);
-
-    if (!typeDefinition) return dependencies;
-
-    // For each property, check if it references another type
-    for (const prop of typeDefinition.properties) {
-      // Check for direct references
-      const refMatch = typeDefinition.content.match(
-        new RegExp(`${prop}\\?:\\s*string\\s*\\|\\s*([A-Za-z0-9_]+)`, "g"),
-      );
-
-      if (refMatch) {
-        for (const match of refMatch) {
-          const refTypeName = match.split("|")[1]?.trim();
-          if (refTypeName && this.typeTracker.hasType(refTypeName)) {
-            dependencies.add(refTypeName);
-          }
-        }
-      }
-
-      // Check for array references
-      const arrayRefMatch = typeDefinition.content.match(
-        new RegExp(
-          `${prop}\\?:\\s*string\\[\\]\\s*\\|\\s*Array<([A-Za-z0-9_]+)>`,
-          "g",
-        ),
-      );
-
-      if (arrayRefMatch) {
-        for (const match of arrayRefMatch) {
-          const arrayType = match.match(/Array<([A-Za-z0-9_]+)>/);
-          if (
-            arrayType &&
-            arrayType[1] &&
-            this.typeTracker.hasType(arrayType[1])
-          ) {
-            dependencies.add(arrayType[1]);
-          }
-        }
-      }
-    }
-
-    return dependencies;
-  }
-
-  /**
-   * Finds circular references using depth-first search
-   */
-  private findCircularReferences(
-    typeName: string,
-    visited: Set<string>,
-    path: string[] = [],
-  ): void {
-    // If we've seen this type in the current path, we have a cycle
-    if (path.includes(typeName)) {
-      // Mark the type in the cycle as circular
-      const cycleStart = path.indexOf(typeName);
-      const cycle = path.slice(cycleStart).concat(typeName);
-
-      for (const typeInCycle of cycle) {
-        this.circularReferenceTypes.add(typeInCycle);
-      }
-      return;
-    }
-
-    // If we've already completely visited this type, skip
-    if (visited.has(typeName)) {
-      return;
-    }
-
-    // Visit the current type
-    visited.add(typeName);
-    path.push(typeName);
-
-    // Visit all dependencies
-    const dependencies =
-      this.typeCircularDependencies.get(typeName) || new Set();
-    for (const dependency of dependencies) {
-      this.findCircularReferences(dependency, visited, [...path]);
-    }
   }
 
   /**
@@ -250,8 +140,9 @@ export class SchemaProcessor {
 
         // For system collections, we'll only include custom fields
         if (isSystemCollection) {
-          this.generateSystemCollectionFields(schema, collection);
+          this.generateSystemCollectionInterface(schema, collection);
         } else {
+          // Generate interface for regular collection
           this.generateSDKInterface(schema, refName, collection);
         }
       }
@@ -283,7 +174,7 @@ export class SchemaProcessor {
 
         if (!this.processedTypes.has(refName)) {
           this.processedTypes.add(refName);
-          this.generateSystemCollectionFields(schema, collection);
+          this.generateSystemCollectionInterface(schema, collection);
         }
 
         if (this.typeTracker.hasValidContent(refName)) {
@@ -328,7 +219,7 @@ export class SchemaProcessor {
           },
         } as OpenAPIV3.SchemaObject;
 
-        this.generateSystemCollectionFields(minimalSchema, collectionName);
+        this.generateSystemCollectionInterface(minimalSchema, collectionName);
 
         if (this.typeTracker.hasValidContent(typeName)) {
           schemas[collectionName] = {
@@ -343,7 +234,7 @@ export class SchemaProcessor {
   /**
    * Generates interface for system collection's custom fields
    */
-  private generateSystemCollectionFields(
+  private generateSystemCollectionInterface(
     schema: OpenAPIV3.SchemaObject,
     collection: string,
   ): void {
@@ -356,7 +247,7 @@ export class SchemaProcessor {
 
     // Use the system collection type name
     const typeName = this.getSystemCollectionTypeName(collection);
-    let interfaceStr = `export type ${typeName} = {\n`;
+    let interfaceStr = `export interface ${typeName} {\n`;
 
     // Check if customFields already has an ID field
     const hasCustomId = customFields.some(
@@ -379,11 +270,10 @@ export class SchemaProcessor {
         propName,
         propSchema,
         true,
-        typeName,
       );
     }
 
-    interfaceStr += "};\n\n";
+    interfaceStr += "}\n\n";
     this.typeTracker.addType(typeName, interfaceStr, properties);
   }
 
@@ -421,12 +311,12 @@ export class SchemaProcessor {
 
     if (nonSystemFields.length === 0) {
       // If no properties, add default id field for regular collections
-      const interfaceStr = `export type ${refName} = {\n  id: string;\n};\n\n`;
+      const interfaceStr = `export interface ${refName} {\n  id: string;\n}\n\n`;
       this.typeTracker.addType(refName, interfaceStr, ["id"]);
       return;
     }
 
-    let interfaceStr = `export type ${refName} = {\n`;
+    let interfaceStr = `export interface ${refName} {\n`;
     const properties: string[] = [];
 
     for (const [propName, propSchema] of nonSystemFields) {
@@ -437,11 +327,10 @@ export class SchemaProcessor {
         propName,
         propSchema,
         false,
-        refName,
       );
     }
 
-    interfaceStr += "};\n\n";
+    interfaceStr += "}\n\n";
     this.typeTracker.addType(refName, interfaceStr, properties);
   }
 
@@ -452,7 +341,6 @@ export class SchemaProcessor {
     propName: string,
     propSchema: OpenAPIV3.SchemaObject | OpenAPIV3.ReferenceObject,
     isSystemCollection: boolean = false,
-    parentTypeName: string = "",
   ): string {
     // Special handling for user references that commonly cause recursion
     if (
@@ -460,7 +348,7 @@ export class SchemaProcessor {
       propName === "user_updated" ||
       propName === "user"
     ) {
-      // For these fields, always use string | DirectusUsers without recursion checks
+      // For these fields, always use string | DirectusUsers
       if (this.options.useTypeReferences && !isSystemCollection) {
         return `  ${propName}?: string | DirectusUsers;\n`;
       } else {
@@ -473,7 +361,6 @@ export class SchemaProcessor {
         propName,
         propSchema,
         isSystemCollection,
-        parentTypeName,
       );
     }
 
@@ -482,16 +369,14 @@ export class SchemaProcessor {
         propName,
         propSchema,
         isSystemCollection,
-        parentTypeName,
       );
     }
 
-    if (propSchema.type === "array" && "items" in propSchema) {
+    if (isArraySchema(propSchema)) {
       return this.generateArrayPropertyDefinition(
         propName,
-        propSchema as OpenAPIV3.ArraySchemaObject,
+        propSchema,
         isSystemCollection,
-        parentTypeName,
       );
     }
 
@@ -500,7 +385,6 @@ export class SchemaProcessor {
         propName,
         propSchema,
         isSystemCollection,
-        parentTypeName,
       );
     }
 
@@ -533,8 +417,13 @@ export class SchemaProcessor {
         this.typeTracker.hasValidContent(this.getSystemCollectionTypeName(ref)),
     );
 
-    // First create the main schema type
+    // First add all interfaces
     let source = "";
+    for (const typeName of this.typeTracker.getAllTypeNames()) {
+      source += this.typeTracker.getTypeContent(typeName);
+    }
+
+    // Then create the main schema type
     if (validCollections.length > 0) {
       source += `\nexport type ${this.options.typeName} = {\n`;
 
@@ -552,87 +441,26 @@ export class SchemaProcessor {
         source += `  ${collectionName}: ${pascalCaseName}${isSingleton ? "" : "[]"};\n`;
       }
 
-      // Then add system collections (as singular types) if they should be included
+      // Then add system collections (as arrays)
       const systemCollections = validCollections.filter(([collectionName]) =>
         collectionName.startsWith("directus_"),
       );
 
       for (const [collectionName, { ref }] of systemCollections) {
         const typeName = this.getSystemCollectionTypeName(ref);
-        source += `  ${collectionName}: ${typeName};\n`;
+        source += `  ${collectionName}: ${typeName}[];\n`;
       }
 
       source += `};\n\n`;
     }
 
-    // Generate recursive interfaces for types with circular references
-    for (const typeName of this.circularReferenceTypes) {
-      const originalType = this.typeTracker.getType(typeName);
-      if (!originalType) continue;
-
-      // Create a recursive version of the type
-      const recursiveType = this.createRecursiveType(typeName, originalType);
-      source += recursiveType;
-    }
-
-    // Add all remaining types
-    for (const typeName of this.typeTracker.getAllTypeNames()) {
-      if (!this.circularReferenceTypes.has(typeName)) {
-        source += this.typeTracker.getTypeContent(typeName);
-      }
-    }
-
-    return source.replace(/\| \{\}\[\]/g, "");
-  }
-
-  /**
-   * Creates a recursive version of a type to handle circular references
-   */
-  private createRecursiveType(
-    typeName: string,
-    original: { content: string; properties: string[] },
-  ): string {
-    // Extract the type definition body between braces
-    const typeBodyMatch = original.content.match(
-      /export type [A-Za-z0-9_]+ = \{([\s\S]*?)\};/,
-    );
-    if (!typeBodyMatch || !typeBodyMatch[1]) {
-      return original.content;
-    }
-
-    const typeBody = typeBodyMatch[1];
-
-    // Get the dependencies for this type
-    const dependencies =
-      this.typeCircularDependencies.get(typeName) || new Set();
-
-    // Replace recursive references with less drastic measures - use union with string
-    // instead of using Omit<Type, never> which results in 'never'
-    let updatedBody = typeBody;
-    for (const dependency of dependencies) {
-      if (this.circularReferenceTypes.has(dependency)) {
-        // Replace reference in property definitions, keep string as an option
-        const regex = new RegExp(`(string \\| ${dependency})`, "g");
-        updatedBody = updatedBody.replace(regex, "string");
-
-        // Replace array references
-        const arrayRegex = new RegExp(
-          `string\\[\\] \\| Array<${dependency}>`,
-          "g",
-        );
-        updatedBody = updatedBody.replace(arrayRegex, "string[]");
-      }
-    }
-
-    // Recreate the type definition with the updated body
-    return `export type ${typeName} = {${updatedBody}};\n\n`;
+    return source;
   }
 
   private generateReferencePropertyDefinition(
     propName: string,
     propSchema: OpenAPIV3.ReferenceObject,
     isSystemCollection: boolean = false,
-    parentTypeName: string = "",
   ): string {
     // Extract reference type name
     const refPath = propSchema.$ref;
@@ -661,14 +489,8 @@ export class SchemaProcessor {
       }
     }
 
-    // Check if this would create a circular reference
-    const isCircular = this.wouldCreateCircularReference(
-      parentTypeName,
-      refTypeName,
-    );
-
-    // For system collections or circular references, use string type
-    if (isSystemCollection || isCircular) {
+    // For system collections, use string type
+    if (isSystemCollection) {
       return `  ${propName}?: string;\n`;
     }
 
@@ -684,7 +506,6 @@ export class SchemaProcessor {
     propName: string,
     propSchema: OpenAPIV3.SchemaObject,
     isSystemCollection: boolean = false,
-    parentTypeName: string = "",
   ): string {
     // Find a $ref in the oneOf array
     const refItem = propSchema.oneOf?.find((item) => "$ref" in item);
@@ -713,18 +534,8 @@ export class SchemaProcessor {
           }
         }
 
-        // Check if this would create a circular reference
-        const isCircular = this.wouldCreateCircularReference(
-          parentTypeName,
-          refTypeName,
-        );
-
-        // Use type references if enabled and not circular
-        if (
-          this.options.useTypeReferences &&
-          !isSystemCollection &&
-          !isCircular
-        ) {
+        // Use type references if enabled
+        if (this.options.useTypeReferences && !isSystemCollection) {
           return `  ${propName}?: string | ${refTypeName};\n`;
         }
       }
@@ -739,7 +550,6 @@ export class SchemaProcessor {
     propName: string,
     propSchema: OpenAPIV3.ArraySchemaObject,
     isSystemCollection: boolean = false,
-    parentTypeName: string = "",
   ): string {
     // Handle arrays of references
     if (isReferenceObject(propSchema.items)) {
@@ -762,19 +572,9 @@ export class SchemaProcessor {
           }
         }
 
-        // Check if this would create a circular reference
-        const isCircular = this.wouldCreateCircularReference(
-          parentTypeName,
-          refTypeName,
-        );
-
-        // For regular collections with non-circular references, use both types
-        if (
-          this.options.useTypeReferences &&
-          !isSystemCollection &&
-          !isCircular
-        ) {
-          return `  ${propName}?: string[] | Array<{ id: string }>;\n`;
+        // For regular collections, use both types
+        if (this.options.useTypeReferences && !isSystemCollection) {
+          return `  ${propName}?: string[] | ${refTypeName}[];\n`;
         }
       }
 
@@ -806,19 +606,9 @@ export class SchemaProcessor {
             }
           }
 
-          // Check if this would create a circular reference
-          const isCircular = this.wouldCreateCircularReference(
-            parentTypeName,
-            refTypeName,
-          );
-
-          // For arrays of items with oneOf, use both types if not circular
-          if (
-            this.options.useTypeReferences &&
-            !isSystemCollection &&
-            !isCircular
-          ) {
-            return `  ${propName}?: string[] | Array<{ id: string }>;\n`;
+          // For arrays of items with oneOf
+          if (this.options.useTypeReferences && !isSystemCollection) {
+            return `  ${propName}?: string[] | ${refTypeName}[];\n`;
           }
         }
       }
@@ -842,7 +632,6 @@ export class SchemaProcessor {
     propName: string,
     propSchema: OpenAPIV3.SchemaObject,
     isSystemCollection: boolean = false,
-    parentTypeName: string = "",
   ): string {
     if (propName === "item") {
       return `  ${propName}?: ${propSchema.type ?? "unknown"};\n`;
@@ -864,14 +653,7 @@ export class SchemaProcessor {
     ) {
       // If it's a reference to a system collection, use the system type name
       if (systemTypeName) {
-        // Check if this would create a circular reference
-        const isCircular = this.wouldCreateCircularReference(
-          parentTypeName,
-          systemTypeName,
-        );
-        if (!isCircular) {
-          return `  ${propName}?: string | ${systemTypeName};\n`;
-        }
+        return `  ${propName}?: string | ${systemTypeName};\n`;
       } else {
         // Convert related collection name to PascalCase for type reference
         const relatedTypeName = toPascalCase(relatedCollectionName);
@@ -880,13 +662,8 @@ export class SchemaProcessor {
         const relatedTypeExists =
           !!this.spec.components?.schemas?.[relatedTypeName];
 
-        // Check if this would create a circular reference
-        const isCircular =
-          relatedTypeExists &&
-          this.wouldCreateCircularReference(parentTypeName, relatedTypeName);
-
-        if (relatedTypeExists && !isCircular) {
-          return `  ${propName}?: string | { id: string };\n`;
+        if (relatedTypeExists) {
+          return `  ${propName}?: string | ${relatedTypeName};\n`;
         }
       }
     }
@@ -931,67 +708,5 @@ export class SchemaProcessor {
     }
 
     return `  ${propName}${optional ? "?" : ""}: ${baseType ?? "unknown"};\n`;
-  }
-
-  /**
-   * Checks if adding a reference from parent to child would create a circular reference
-   */
-  private wouldCreateCircularReference(
-    parentTypeName: string,
-    childTypeName: string,
-  ): boolean {
-    if (!parentTypeName || !childTypeName) return false;
-    if (parentTypeName === childTypeName) return true;
-
-    // Check if child is already part of a known circular reference
-    if (this.circularReferenceTypes.has(childTypeName)) {
-      // Get dependencies of child to see if parent is in the chain
-      const dependencies = this.findDependencyPath(
-        childTypeName,
-        parentTypeName,
-        new Set(),
-      );
-      return dependencies.length > 0;
-    }
-
-    return false;
-  }
-
-  /**
-   * Finds a dependency path between two types if one exists
-   */
-  private findDependencyPath(
-    from: string,
-    to: string,
-    visited: Set<string>,
-    path: string[] = [],
-  ): string[] {
-    // If we've found the target, return the path
-    if (from === to) {
-      return [...path, from];
-    }
-
-    // If we've already visited this type, skip it
-    if (visited.has(from)) {
-      return [];
-    }
-
-    // Mark as visited and add to path
-    visited.add(from);
-    path.push(from);
-
-    // Check all dependencies
-    const dependencies = this.typeCircularDependencies.get(from) || new Set();
-    for (const dependency of dependencies) {
-      const result = this.findDependencyPath(dependency, to, visited, [
-        ...path,
-      ]);
-      if (result.length > 0) {
-        return result;
-      }
-    }
-
-    // No path found
-    return [];
   }
 }
