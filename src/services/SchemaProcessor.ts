@@ -78,6 +78,16 @@ export class SchemaProcessor {
   }
 
   /**
+   * Check if a collection name represents a system collection
+   */
+  private isSystemCollection(collectionName: string): boolean {
+    return (
+      collectionName.startsWith("directus_") ||
+      this.systemCollectionMap.has(collectionName)
+    );
+  }
+
+  /**
    * Convert plural name to singular for type consistency
    */
   private makeSingular(name: string): string {
@@ -325,6 +335,40 @@ export class SchemaProcessor {
   }
 
   /**
+   * Attempts to determine the correct system collection type from a field name or reference
+   * This is especially useful for junction tables and M2M relationships
+   */
+  private getSystemTypeFromReference(
+    fieldName: string,
+    collectionHint?: string,
+  ): string | null {
+    // Common patterns for directus_users references in junction tables
+    if (
+      fieldName === "directus_users_id" ||
+      fieldName === "user_id" ||
+      fieldName === "user" ||
+      (collectionHint && collectionHint.includes("directus_users"))
+    ) {
+      return "DirectusUser";
+    }
+
+    // Check for other common system collection references
+    for (const [shortName, typeName] of this.systemCollectionMap.entries()) {
+      const fullName = `directus_${shortName}`;
+      if (
+        fieldName === `${fullName}_id` ||
+        fieldName === `${shortName}_id` ||
+        fieldName === shortName ||
+        (collectionHint && collectionHint.includes(fullName))
+      ) {
+        return typeName;
+      }
+    }
+
+    return null;
+  }
+
+  /**
    * Generates interface for system collection's custom fields
    */
   private generateSystemCollectionInterface(
@@ -363,6 +407,7 @@ export class SchemaProcessor {
         propName,
         propSchema,
         true,
+        collection,
       );
     }
 
@@ -405,6 +450,7 @@ export class SchemaProcessor {
         propName,
         propSchema,
         false,
+        collectionName,
       );
     }
 
@@ -419,6 +465,7 @@ export class SchemaProcessor {
     propName: string,
     propSchema: OpenAPIV3.SchemaObject | OpenAPIV3.ReferenceObject,
     isSystemCollection: boolean = false,
+    parentCollection?: string,
   ): string {
     // Special handling for user references that commonly cause recursion
     if (
@@ -434,11 +481,21 @@ export class SchemaProcessor {
       }
     }
 
+    // Check if this is a direct reference to a system collection type
+    const systemType = this.getSystemTypeFromReference(
+      propName,
+      parentCollection,
+    );
+    if (systemType && this.options.useTypeReferences && !isSystemCollection) {
+      return `  ${propName}?: string | ${systemType};\n`;
+    }
+
     if (isReferenceObject(propSchema)) {
       return this.generateReferencePropertyDefinition(
         propName,
         propSchema,
         isSystemCollection,
+        parentCollection,
       );
     }
 
@@ -447,6 +504,7 @@ export class SchemaProcessor {
         propName,
         propSchema,
         isSystemCollection,
+        parentCollection,
       );
     }
 
@@ -455,6 +513,7 @@ export class SchemaProcessor {
         propName,
         propSchema,
         isSystemCollection,
+        parentCollection,
       );
     }
 
@@ -463,6 +522,7 @@ export class SchemaProcessor {
         propName,
         propSchema,
         isSystemCollection,
+        parentCollection,
       );
     }
 
@@ -476,6 +536,7 @@ export class SchemaProcessor {
     propName: string,
     propSchema: OpenAPIV3.ReferenceObject,
     isSystemCollection: boolean = false,
+    parentCollection?: string,
   ): string {
     const refMatch = /^#\/components\/schemas\/([^/]+)$/.exec(propSchema.$ref);
     if (!refMatch || !refMatch[1]) {
@@ -484,18 +545,24 @@ export class SchemaProcessor {
 
     const collectionName = refMatch[1];
 
-    // For system collections, use string type
+    // For system collections, use string type if it's a system collection definition
     if (isSystemCollection) {
       return `  ${propName}?: string;\n`;
+    }
+
+    // Check for system collection references in junction tables
+    const systemType = this.getSystemTypeFromReference(
+      propName,
+      parentCollection,
+    );
+    if (systemType && this.options.useTypeReferences) {
+      return `  ${propName}?: string | ${systemType};\n`;
     }
 
     // Otherwise, use the type reference if enabled
     if (this.options.useTypeReferences) {
       // For system collections like Users, use DirectusUser
-      if (
-        collectionName.startsWith("directus_") ||
-        this.systemCollectionMap.has(collectionName.toLowerCase())
-      ) {
+      if (this.isSystemCollection(collectionName)) {
         const typeName = this.getSystemCollectionTypeName(collectionName);
         return `  ${propName}?: string | ${typeName};\n`;
       }
@@ -516,7 +583,17 @@ export class SchemaProcessor {
     propName: string,
     propSchema: OpenAPIV3.SchemaObject,
     isSystemCollection: boolean = false,
+    parentCollection?: string,
   ): string {
+    // First check for system type references in junction tables
+    const systemType = this.getSystemTypeFromReference(
+      propName,
+      parentCollection,
+    );
+    if (systemType && this.options.useTypeReferences && !isSystemCollection) {
+      return `  ${propName}?: string | ${systemType};\n`;
+    }
+
     // Find a $ref in the oneOf array
     const refItem = propSchema.oneOf?.find((item) => "$ref" in item);
 
@@ -528,10 +605,7 @@ export class SchemaProcessor {
 
         if (this.options.useTypeReferences && !isSystemCollection) {
           // For system collections
-          if (
-            collectionName.startsWith("directus_") ||
-            this.systemCollectionMap.has(collectionName.toLowerCase())
-          ) {
+          if (this.isSystemCollection(collectionName)) {
             const typeName = this.getSystemCollectionTypeName(collectionName);
             return `  ${propName}?: string | ${typeName};\n`;
           }
@@ -556,7 +630,17 @@ export class SchemaProcessor {
     propName: string,
     propSchema: OpenAPIV3.ArraySchemaObject,
     isSystemCollection: boolean = false,
+    parentCollection?: string,
   ): string {
+    // First check for system type references in junction tables
+    const systemType = this.getSystemTypeFromReference(
+      propName,
+      parentCollection,
+    );
+    if (systemType && this.options.useTypeReferences && !isSystemCollection) {
+      return `  ${propName}?: string[] | ${systemType}[];\n`;
+    }
+
     // Handle arrays of references
     if (isReferenceObject(propSchema.items)) {
       // Extract proper collection name and type
@@ -569,10 +653,7 @@ export class SchemaProcessor {
         // For regular collections, use both types
         if (this.options.useTypeReferences && !isSystemCollection) {
           // For system collections
-          if (
-            collectionName.startsWith("directus_") ||
-            this.systemCollectionMap.has(collectionName.toLowerCase())
-          ) {
+          if (this.isSystemCollection(collectionName)) {
             const typeName = this.getSystemCollectionTypeName(collectionName);
             return `  ${propName}?: string[] | ${typeName}[];\n`;
           }
@@ -600,10 +681,7 @@ export class SchemaProcessor {
           // For arrays of items with oneOf
           if (this.options.useTypeReferences && !isSystemCollection) {
             // For system collections
-            if (
-              collectionName.startsWith("directus_") ||
-              this.systemCollectionMap.has(collectionName.toLowerCase())
-            ) {
+            if (this.isSystemCollection(collectionName)) {
               const typeName = this.getSystemCollectionTypeName(collectionName);
               return `  ${propName}?: string[] | ${typeName}[];\n`;
             }
@@ -638,7 +716,17 @@ export class SchemaProcessor {
     propName: string,
     propSchema: OpenAPIV3.SchemaObject,
     isSystemCollection: boolean = false,
+    parentCollection?: string,
   ): string {
+    // First check for system type references in junction tables
+    const systemType = this.getSystemTypeFromReference(
+      propName,
+      parentCollection,
+    );
+    if (systemType && this.options.useTypeReferences && !isSystemCollection) {
+      return `  ${propName}?: string | ${systemType};\n`;
+    }
+
     if (propName === "item") {
       return `  ${propName}?: ${propSchema.type ?? "unknown"};\n`;
     }
@@ -655,10 +743,7 @@ export class SchemaProcessor {
       !isSystemCollection
     ) {
       // Check if this is a reference to a system collection
-      if (
-        relatedCollectionName.startsWith("directus_") ||
-        this.systemCollectionMap.has(relatedCollectionName)
-      ) {
+      if (this.isSystemCollection(relatedCollectionName)) {
         const typeName = this.getSystemCollectionTypeName(
           relatedCollectionName,
         );
