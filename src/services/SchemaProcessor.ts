@@ -44,24 +44,44 @@ export class SchemaProcessor {
    */
   private initializeSystemCollectionMap(): void {
     // Map standard Directus system collections to their Type names
-    this.systemCollectionMap.set("users", "CustomDirectusUser");
-    this.systemCollectionMap.set("files", "CustomDirectusFile");
-    this.systemCollectionMap.set("folders", "CustomDirectusFolder");
-    this.systemCollectionMap.set("roles", "CustomDirectusRole");
-    this.systemCollectionMap.set("activity", "CustomDirectusActivity");
-    this.systemCollectionMap.set("permissions", "CustomDirectusPermission");
-    this.systemCollectionMap.set("fields", "CustomDirectusField");
-    this.systemCollectionMap.set("collections", "CustomDirectusCollection");
-    this.systemCollectionMap.set("presets", "CustomDirectusPreset");
-    this.systemCollectionMap.set("relations", "CustomDirectusRelation");
-    this.systemCollectionMap.set("revisions", "CustomDirectusRevision");
-    this.systemCollectionMap.set("webhooks", "CustomDirectusWebhook");
-    this.systemCollectionMap.set("flows", "CustomDirectusFlow");
-    this.systemCollectionMap.set("operations", "CustomDirectusOperation");
-    this.systemCollectionMap.set("versions", "CustomDirectusVersion");
-    this.systemCollectionMap.set("extensions", "CustomDirectusExtension");
-    this.systemCollectionMap.set("comments", "CustomDirectusComment");
-    this.systemCollectionMap.set("settings", "CustomDirectusSetting");
+    this.systemCollectionMap.set("users", "DirectusUser");
+    this.systemCollectionMap.set("files", "DirectusFile");
+    this.systemCollectionMap.set("folders", "DirectusFolder");
+    this.systemCollectionMap.set("roles", "DirectusRole");
+    this.systemCollectionMap.set("activity", "DirectusActivity");
+    this.systemCollectionMap.set("permissions", "DirectusPermission");
+    this.systemCollectionMap.set("fields", "DirectusField");
+    this.systemCollectionMap.set("collections", "DirectusCollection");
+    this.systemCollectionMap.set("presets", "DirectusPreset");
+    this.systemCollectionMap.set("relations", "DirectusRelation");
+    this.systemCollectionMap.set("revisions", "DirectusRevision");
+    this.systemCollectionMap.set("webhooks", "DirectusWebhook");
+    this.systemCollectionMap.set("flows", "DirectusFlow");
+    this.systemCollectionMap.set("operations", "DirectusOperation");
+    this.systemCollectionMap.set("versions", "DirectusVersion");
+    this.systemCollectionMap.set("extensions", "DirectusExtension");
+    this.systemCollectionMap.set("comments", "DirectusComment");
+    this.systemCollectionMap.set("settings", "DirectusSetting");
+  }
+
+  /**
+   * Convert plural name to singular for type consistency
+   */
+  private makeSingular(name: string): string {
+    // Common plural endings
+    if (name.endsWith("ies")) {
+      return name.slice(0, -3) + "y";
+    } else if (name.endsWith("ses")) {
+      return name.slice(0, -2);
+    } else if (
+      name.endsWith("s") &&
+      !name.endsWith("ss") &&
+      !name.endsWith("us") &&
+      !name.endsWith("is")
+    ) {
+      return name.slice(0, -1);
+    }
+    return name;
   }
 
   /**
@@ -89,26 +109,6 @@ export class SchemaProcessor {
     // Not a system collection - generate appropriate name
     const pascalName = toPascalCase(collectionNameOrRef);
     return this.makeSingular(pascalName);
-  }
-
-  /**
-   * Convert plural name to singular for type consistency
-   */
-  private makeSingular(name: string): string {
-    // Common plural endings
-    if (name.endsWith("ies")) {
-      return name.slice(0, -3) + "y";
-    } else if (name.endsWith("ses")) {
-      return name.slice(0, -2);
-    } else if (
-      name.endsWith("s") &&
-      !name.endsWith("ss") &&
-      !name.endsWith("us") &&
-      !name.endsWith("is")
-    ) {
-      return name.slice(0, -1);
-    }
-    return name;
   }
 
   /**
@@ -215,6 +215,23 @@ export class SchemaProcessor {
   }
 
   /**
+   * Get the appropriate ID type for system collections
+   */
+  private getSystemCollectionIdType(collection: string): string {
+    // Most system collections have string ids, except for specific ones
+    const numberIdCollections = [
+      "directus_permissions",
+      "directus_activity",
+      "directus_presets",
+      "directus_revisions",
+      "directus_webhooks",
+      "directus_settings",
+    ];
+
+    return numberIdCollections.includes(collection) ? "number" : "string";
+  }
+
+  /**
    * Ensure all standard system collections are defined
    */
   private ensureStandardSystemCollections(
@@ -234,12 +251,7 @@ export class SchemaProcessor {
           properties: {
             id: {
               type:
-                shortName === "permissions" ||
-                shortName === "activity" ||
-                shortName === "presets" ||
-                shortName === "revisions" ||
-                shortName === "webhooks" ||
-                shortName === "settings"
+                this.getSystemCollectionIdType(collectionName) === "number"
                   ? "integer"
                   : "string",
             },
@@ -256,6 +268,21 @@ export class SchemaProcessor {
         }
       }
     }
+  }
+
+  /**
+   * Checks if a field is a system field
+   */
+  private isSystemField(fieldName: string, collection?: string): boolean {
+    if (fieldName === "id") return false;
+    if (!collection?.startsWith("directus_")) return false;
+
+    if (collection && collection in SYSTEM_FIELDS) {
+      const fields = SYSTEM_FIELDS[collection as keyof typeof SYSTEM_FIELDS];
+      return (fields as readonly string[]).includes(fieldName);
+    }
+
+    return false;
   }
 
   /**
@@ -305,24 +332,6 @@ export class SchemaProcessor {
   }
 
   /**
-   * Get the appropriate ID type for system collections
-   */
-  private getSystemCollectionIdType(collection: string): string {
-    // Most system collections have string ids, except for specific ones
-    if (
-      collection === "directus_permissions" ||
-      collection === "directus_activity" ||
-      collection === "directus_presets" ||
-      collection === "directus_revisions" ||
-      collection === "directus_webhooks" ||
-      collection === "directus_settings"
-    ) {
-      return "number";
-    }
-    return "string";
-  }
-
-  /**
    * Generates TypeScript interface from schema
    */
   private generateSDKInterface(
@@ -362,6 +371,37 @@ export class SchemaProcessor {
   }
 
   /**
+   * Resolves reference type name with proper handling for system collections
+   */
+  private resolveRefTypeName(refPath: string): string {
+    const refMatch = /^#\/components\/schemas\/([^/]+)$/.exec(refPath);
+    if (!refMatch || !refMatch[1]) return "";
+
+    const refTypeName = refMatch[1];
+
+    // Map standard system collection references
+    const systemCollections = {
+      Users: "DirectusUser",
+      Files: "DirectusFile",
+      Folders: "DirectusFolder",
+      Roles: "DirectusRole",
+    };
+
+    if (refTypeName in systemCollections) {
+      return systemCollections[refTypeName as keyof typeof systemCollections];
+    }
+
+    // For other potential system collections
+    const systemTypeName = this.getSystemCollectionTypeName(refTypeName);
+    if (systemTypeName !== refTypeName) {
+      return systemTypeName;
+    }
+
+    // Make sure we use singular form for referenced types
+    return this.makeSingular(refTypeName);
+  }
+
+  /**
    * Generates TypeScript definition for a property
    */
   private generatePropertyDefinition(
@@ -375,9 +415,9 @@ export class SchemaProcessor {
       propName === "user_updated" ||
       propName === "user"
     ) {
-      // For these fields, always use string | DirectusUsers
+      // For these fields, always use string | DirectusUser
       if (this.options.useTypeReferences && !isSystemCollection) {
-        return `  ${propName}?: string | CustomDirectusUser;\n`;
+        return `  ${propName}?: string | DirectusUser;\n`;
       } else {
         return `  ${propName}?: string;\n`;
       }
@@ -419,18 +459,206 @@ export class SchemaProcessor {
   }
 
   /**
-   * Checks if a field is a system field
+   * Generate property definition for reference fields
    */
-  private isSystemField(fieldName: string, collection?: string): boolean {
-    if (fieldName === "id") return false;
-    if (!collection?.startsWith("directus_")) return false;
+  private generateReferencePropertyDefinition(
+    propName: string,
+    propSchema: OpenAPIV3.ReferenceObject,
+    isSystemCollection: boolean = false,
+  ): string {
+    const refTypeName = this.resolveRefTypeName(propSchema.$ref);
 
-    if (collection && collection in SYSTEM_FIELDS) {
-      const fields = SYSTEM_FIELDS[collection as keyof typeof SYSTEM_FIELDS];
-      return (fields as readonly string[]).includes(fieldName);
+    if (refTypeName === "") {
+      return `  ${propName}?: string;\n`;
     }
 
-    return false;
+    // For system collections, use string type
+    if (isSystemCollection) {
+      return `  ${propName}?: string;\n`;
+    }
+
+    // Otherwise, use the type reference if enabled
+    if (this.options.useTypeReferences) {
+      return `  ${propName}?: string | ${refTypeName};\n`;
+    }
+
+    return `  ${propName}?: string;\n`;
+  }
+
+  /**
+   * Generate property definition for oneOf fields
+   */
+  private generateOneOfPropertyDefinition(
+    propName: string,
+    propSchema: OpenAPIV3.SchemaObject,
+    isSystemCollection: boolean = false,
+  ): string {
+    // Find a $ref in the oneOf array
+    const refItem = propSchema.oneOf?.find((item) => "$ref" in item);
+
+    if (refItem && "$ref" in refItem && typeof refItem.$ref === "string") {
+      const refTypeName = this.resolveRefTypeName(refItem.$ref);
+
+      if (
+        refTypeName !== "" &&
+        this.options.useTypeReferences &&
+        !isSystemCollection
+      ) {
+        return `  ${propName}?: string | ${refTypeName};\n`;
+      }
+
+      return `  ${propName}?: string;\n`;
+    }
+
+    return `  ${propName}?: unknown;\n`;
+  }
+
+  /**
+   * Generate property definition for array fields
+   */
+  private generateArrayPropertyDefinition(
+    propName: string,
+    propSchema: OpenAPIV3.ArraySchemaObject,
+    isSystemCollection: boolean = false,
+  ): string {
+    // Handle arrays of references
+    if (isReferenceObject(propSchema.items)) {
+      const refTypeName = this.resolveRefTypeName(propSchema.items.$ref);
+
+      // For regular collections, use both types
+      if (
+        refTypeName !== "" &&
+        this.options.useTypeReferences &&
+        !isSystemCollection
+      ) {
+        return `  ${propName}?: string[] | ${refTypeName}[];\n`;
+      }
+
+      return `  ${propName}?: string[];\n`;
+    }
+
+    // Handle arrays with oneOf
+    if ("oneOf" in propSchema.items && Array.isArray(propSchema.items.oneOf)) {
+      const refItem = propSchema.items.oneOf.find((item) => "$ref" in item);
+
+      if (refItem && "$ref" in refItem && typeof refItem.$ref === "string") {
+        const refTypeName = this.resolveRefTypeName(refItem.$ref);
+
+        // For arrays of items with oneOf
+        if (
+          refTypeName !== "" &&
+          this.options.useTypeReferences &&
+          !isSystemCollection
+        ) {
+          return `  ${propName}?: string[] | ${refTypeName}[];\n`;
+        }
+      }
+
+      return `  ${propName}?: string[];\n`;
+    }
+
+    // Handle simple array types
+    if ("type" in propSchema.items) {
+      if (propSchema.items.type === "integer") {
+        return `  ${propName}?: number[];\n`;
+      } else if (propSchema.items.type === "string") {
+        return `  ${propName}?: string[];\n`;
+      }
+    }
+
+    return `  ${propName}?: unknown[];\n`;
+  }
+
+  /**
+   * Generate property definition for ID fields
+   */
+  private generateIdPropertyDefinition(
+    propName: string,
+    propSchema: OpenAPIV3.SchemaObject,
+    isSystemCollection: boolean = false,
+  ): string {
+    if (propName === "item") {
+      return `  ${propName}?: ${propSchema.type ?? "unknown"};\n`;
+    }
+
+    // Extract potential related collection name from field name (removing _id suffix)
+    const relatedCollectionName = propName.endsWith("_id")
+      ? propName.replace(/_id$/, "")
+      : "";
+
+    // Check if this is a reference to a system collection
+    const systemTypeName = this.systemCollectionMap.get(relatedCollectionName);
+
+    // For ID fields that reference other collections
+    if (
+      this.options.useTypeReferences &&
+      relatedCollectionName &&
+      !isSystemCollection
+    ) {
+      // If it's a reference to a system collection, use the system type name
+      if (systemTypeName) {
+        return `  ${propName}?: string | ${systemTypeName};\n`;
+      } else {
+        // Convert related collection name to PascalCase for type reference and make singular
+        const relatedTypeName = this.makeSingular(
+          toPascalCase(relatedCollectionName),
+        );
+
+        // Check if related type exists in spec components
+        const relatedTypeExists =
+          !!this.spec.components?.schemas?.[relatedTypeName];
+
+        if (relatedTypeExists) {
+          return `  ${propName}?: string | ${relatedTypeName};\n`;
+        }
+      }
+    }
+
+    return `  ${propName}?: string;\n`;
+  }
+
+  /**
+   * Generate property definition for basic fields
+   */
+  private generateBasicPropertyDefinition(
+    propName: string,
+    propSchema: OpenAPIV3.SchemaObject,
+  ): string {
+    const baseType = propSchema.type === "integer" ? "number" : propSchema.type;
+    const optional = "nullable" in propSchema && propSchema.nullable === true;
+
+    // Handle special string formats
+    if (
+      baseType === "string" &&
+      "format" in propSchema &&
+      typeof propSchema.format === "string"
+    ) {
+      const format = propSchema.format;
+
+      if (["date", "time", "date-time", "timestamp"].includes(format)) {
+        return `  ${propName}${optional ? "?" : ""}: string;\n`;
+      }
+
+      if (format === "json") {
+        return `  ${propName}${optional ? "?" : ""}: unknown;\n`;
+      }
+
+      if (format === "csv") {
+        return `  ${propName}${optional ? "?" : ""}: string;\n`;
+      }
+    }
+
+    // Handle object type
+    if (baseType === "object") {
+      return `  ${propName}${optional ? "?" : ""}: Record<string, unknown>;\n`;
+    }
+
+    // Handle array type
+    if (baseType === "array") {
+      return `  ${propName}${optional ? "?" : ""}: unknown[];\n`;
+    }
+
+    return `  ${propName}${optional ? "?" : ""}: ${baseType ?? "unknown"};\n`;
   }
 
   /**
@@ -484,272 +712,5 @@ export class SchemaProcessor {
     }
 
     return source;
-  }
-
-  private generateReferencePropertyDefinition(
-    propName: string,
-    propSchema: OpenAPIV3.ReferenceObject,
-    isSystemCollection: boolean = false,
-  ): string {
-    // Extract reference type name
-    const refPath = propSchema.$ref;
-    const refMatch = /^#\/components\/schemas\/([^/]+)$/.exec(refPath);
-
-    if (!refMatch || !refMatch[1]) {
-      return `  ${propName}?: string;\n`;
-    }
-
-    let refTypeName = refMatch[1];
-
-    // Check if the reference is to a system collection and use the correct name
-    if (refTypeName === "Users") {
-      refTypeName = "CustomDirectusUser";
-    } else if (refTypeName === "Files") {
-      refTypeName = "CustomDirectusFile";
-    } else if (refTypeName === "Folders") {
-      refTypeName = "CustomDirectusFolder";
-    } else if (refTypeName === "Roles") {
-      refTypeName = "CustomDirectusRole";
-    } else {
-      // For other potential system collections
-      const systemTypeName = this.getSystemCollectionTypeName(refTypeName);
-      if (systemTypeName !== refTypeName) {
-        refTypeName = systemTypeName;
-      } else {
-        // Make sure we use singular form for referenced types
-        refTypeName = this.makeSingular(refTypeName);
-      }
-    }
-
-    // For system collections, use string type
-    if (isSystemCollection) {
-      return `  ${propName}?: string;\n`;
-    }
-
-    // Otherwise, use the type reference if enabled
-    if (this.options.useTypeReferences) {
-      return `  ${propName}?: string | ${refTypeName};\n`;
-    }
-
-    return `  ${propName}?: string;\n`;
-  }
-
-  private generateOneOfPropertyDefinition(
-    propName: string,
-    propSchema: OpenAPIV3.SchemaObject,
-    isSystemCollection: boolean = false,
-  ): string {
-    // Find a $ref in the oneOf array
-    const refItem = propSchema.oneOf?.find((item) => "$ref" in item);
-
-    if (refItem && "$ref" in refItem) {
-      const refPath = refItem.$ref;
-      const refMatch = /^#\/components\/schemas\/([^/]+)$/.exec(refPath);
-
-      if (refMatch && refMatch[1]) {
-        let refTypeName = refMatch[1];
-
-        // Adjust for system collections
-        if (refTypeName === "Users") {
-          refTypeName = "CustomDirectusUser";
-        } else if (refTypeName === "Files") {
-          refTypeName = "CustomDirectusFile";
-        } else if (refTypeName === "Folders") {
-          refTypeName = "CustomDirectusFolder";
-        } else if (refTypeName === "Roles") {
-          refTypeName = "CustomDirectusRole";
-        } else {
-          // For other potential system collections
-          const systemTypeName = this.getSystemCollectionTypeName(refTypeName);
-          if (systemTypeName !== refTypeName) {
-            refTypeName = systemTypeName;
-          } else {
-            // Make sure we use singular form for referenced types
-            refTypeName = this.makeSingular(refTypeName);
-          }
-        }
-
-        // Use type references if enabled
-        if (this.options.useTypeReferences && !isSystemCollection) {
-          return `  ${propName}?: string | ${refTypeName};\n`;
-        }
-      }
-
-      return `  ${propName}?: string;\n`;
-    }
-
-    return `  ${propName}?: unknown;\n`;
-  }
-
-  private generateArrayPropertyDefinition(
-    propName: string,
-    propSchema: OpenAPIV3.ArraySchemaObject,
-    isSystemCollection: boolean = false,
-  ): string {
-    // Handle arrays of references
-    if (isReferenceObject(propSchema.items)) {
-      const refPath = propSchema.items.$ref;
-      const refMatch = /^#\/components\/schemas\/([^/]+)$/.exec(refPath);
-
-      if (refMatch && refMatch[1]) {
-        let refTypeName = refMatch[1];
-
-        // Adjust for system collections
-        if (refTypeName === "Users") {
-          refTypeName = "CustomDirectusUser";
-        } else if (refTypeName === "Files") {
-          refTypeName = "CustomDirectusFile";
-        } else {
-          // For other potential system collections
-          const systemTypeName = this.getSystemCollectionTypeName(refTypeName);
-          if (systemTypeName !== refTypeName) {
-            refTypeName = systemTypeName;
-          } else {
-            // Make sure we use singular form for referenced types
-            refTypeName = this.makeSingular(refTypeName);
-          }
-        }
-
-        // For regular collections, use both types
-        if (this.options.useTypeReferences && !isSystemCollection) {
-          return `  ${propName}?: string[] | ${refTypeName}[];\n`;
-        }
-      }
-
-      return `  ${propName}?: string[];\n`;
-    }
-
-    // Handle arrays with oneOf
-    if ("oneOf" in propSchema.items && Array.isArray(propSchema.items.oneOf)) {
-      const refItem = propSchema.items.oneOf.find((item) => "$ref" in item);
-
-      if (refItem && "$ref" in refItem) {
-        const refPath = refItem.$ref;
-        const refMatch = /^#\/components\/schemas\/([^/]+)$/.exec(refPath);
-
-        if (refMatch && refMatch[1]) {
-          let refTypeName = refMatch[1];
-
-          // Adjust for system collections
-          if (refTypeName === "Users") {
-            refTypeName = "CustomDirectusUser";
-          } else if (refTypeName === "Files") {
-            refTypeName = "CustomDirectusFile";
-          } else {
-            // For other potential system collections
-            const systemTypeName =
-              this.getSystemCollectionTypeName(refTypeName);
-            if (systemTypeName !== refTypeName) {
-              refTypeName = systemTypeName;
-            } else {
-              // Make sure we use singular form for referenced types
-              refTypeName = this.makeSingular(refTypeName);
-            }
-          }
-
-          // For arrays of items with oneOf
-          if (this.options.useTypeReferences && !isSystemCollection) {
-            return `  ${propName}?: string[] | ${refTypeName}[];\n`;
-          }
-        }
-      }
-
-      return `  ${propName}?: string[];\n`;
-    }
-
-    // Handle simple array types
-    if ("type" in propSchema.items) {
-      if (propSchema.items.type === "integer") {
-        return `  ${propName}?: number[];\n`;
-      } else if (propSchema.items.type === "string") {
-        return `  ${propName}?: string[];\n`;
-      }
-    }
-
-    return `  ${propName}?: unknown[];\n`;
-  }
-
-  private generateIdPropertyDefinition(
-    propName: string,
-    propSchema: OpenAPIV3.SchemaObject,
-    isSystemCollection: boolean = false,
-  ): string {
-    if (propName === "item") {
-      return `  ${propName}?: ${propSchema.type ?? "unknown"};\n`;
-    }
-
-    // Extract potential related collection name from field name (removing _id suffix)
-    const relatedCollectionName = propName.endsWith("_id")
-      ? propName.replace(/_id$/, "")
-      : "";
-
-    // Check if this is a reference to a system collection
-    const systemTypeName = this.systemCollectionMap.get(relatedCollectionName);
-
-    // For ID fields that reference other collections
-    if (
-      this.options.useTypeReferences &&
-      relatedCollectionName &&
-      !isSystemCollection
-    ) {
-      // If it's a reference to a system collection, use the system type name
-      if (systemTypeName) {
-        return `  ${propName}?: string | ${systemTypeName};\n`;
-      } else {
-        // Convert related collection name to PascalCase for type reference and make singular
-        const relatedTypeName = this.makeSingular(
-          toPascalCase(relatedCollectionName),
-        );
-
-        // Check if related type exists in spec components
-        const relatedTypeExists =
-          !!this.spec.components?.schemas?.[relatedTypeName];
-
-        if (relatedTypeExists) {
-          return `  ${propName}?: string | ${relatedTypeName};\n`;
-        }
-      }
-    }
-
-    return `  ${propName}?: string;\n`;
-  }
-
-  private generateBasicPropertyDefinition(
-    propName: string,
-    propSchema: OpenAPIV3.SchemaObject,
-  ): string {
-    const baseType = propSchema.type === "integer" ? "number" : propSchema.type;
-    const optional = "nullable" in propSchema && propSchema.nullable === true;
-
-    // Handle special string formats
-    if (baseType === "string" && "format" in propSchema) {
-      const format = propSchema.format;
-      if (
-        format === "date" ||
-        format === "time" ||
-        format === "date-time" ||
-        format === "timestamp"
-      ) {
-        return `  ${propName}${optional ? "?" : ""}: string;\n`;
-      }
-      if (format === "json") {
-        return `  ${propName}${optional ? "?" : ""}: unknown;\n`;
-      }
-      if (format === "csv") {
-        return `  ${propName}${optional ? "?" : ""}: string;\n`;
-      }
-    }
-
-    // Handle object type
-    if (baseType === "object") {
-      return `  ${propName}${optional ? "?" : ""}: Record<string, unknown>;\n`;
-    }
-
-    // Handle array type
-    if (baseType === "array") {
-      return `  ${propName}${optional ? "?" : ""}: unknown[];\n`;
-    }
-
-    return `  ${propName}${optional ? "?" : ""}: ${baseType ?? "unknown"};\n`;
   }
 }
