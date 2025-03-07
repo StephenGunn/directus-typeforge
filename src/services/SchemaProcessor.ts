@@ -160,7 +160,7 @@ export class SchemaProcessor {
         {}) as OpenAPIV3.SchemaObject;
 
       // Generate the type name, using singular form
-      let refName = this.makeSingular(toPascalCase(ref));
+      const refName = this.makeSingular(toPascalCase(ref));
 
       if (!this.processedTypes.has(refName)) {
         this.processedTypes.add(refName);
