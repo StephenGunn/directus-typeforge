@@ -20,7 +20,10 @@ import {
 export class SchemaProcessor {
   private spec: OpenAPIV3.Document;
   private typeTracker: TypeTracker;
-  private options: GenerateTypeScriptOptions;
+  private options: {
+    typeName: string;
+    useTypeReferences: boolean;
+  };
   private processedTypes: Set<string> = new Set();
   private systemCollectionMap: Map<string, string> = new Map();
 
@@ -41,49 +44,71 @@ export class SchemaProcessor {
    */
   private initializeSystemCollectionMap(): void {
     // Map standard Directus system collections to their Type names
-    this.systemCollectionMap.set("users", "CustomDirectusUsers");
-    this.systemCollectionMap.set("files", "CustomDirectusFiles");
-    this.systemCollectionMap.set("folders", "CustomDirectusFolders");
-    this.systemCollectionMap.set("roles", "CustomDirectusRoles");
+    this.systemCollectionMap.set("users", "CustomDirectusUser");
+    this.systemCollectionMap.set("files", "CustomDirectusFile");
+    this.systemCollectionMap.set("folders", "CustomDirectusFolder");
+    this.systemCollectionMap.set("roles", "CustomDirectusRole");
     this.systemCollectionMap.set("activity", "CustomDirectusActivity");
-    this.systemCollectionMap.set("permissions", "CustomDirectusPermissions");
-    this.systemCollectionMap.set("fields", "CustomDirectusFields");
-    this.systemCollectionMap.set("collections", "CustomDirectusCollections");
-    this.systemCollectionMap.set("presets", "CustomDirectusPresets");
-    this.systemCollectionMap.set("relations", "CustomDirectusRelations");
-    this.systemCollectionMap.set("revisions", "CustomDirectusRevisions");
-    this.systemCollectionMap.set("webhooks", "CustomDirectusWebhooks");
-    this.systemCollectionMap.set("flows", "CustomDirectusFlows");
-    this.systemCollectionMap.set("operations", "CustomDirectusOperations");
-    this.systemCollectionMap.set("versions", "CustomDirectusVersions");
-    this.systemCollectionMap.set("extensions", "CustomDirectusExtensions");
-    this.systemCollectionMap.set("comments", "CustomDirectusComments");
-    this.systemCollectionMap.set("settings", "CustomDirectusSettings");
+    this.systemCollectionMap.set("permissions", "CustomDirectusPermission");
+    this.systemCollectionMap.set("fields", "CustomDirectusField");
+    this.systemCollectionMap.set("collections", "CustomDirectusCollection");
+    this.systemCollectionMap.set("presets", "CustomDirectusPreset");
+    this.systemCollectionMap.set("relations", "CustomDirectusRelation");
+    this.systemCollectionMap.set("revisions", "CustomDirectusRevision");
+    this.systemCollectionMap.set("webhooks", "CustomDirectusWebhook");
+    this.systemCollectionMap.set("flows", "CustomDirectusFlow");
+    this.systemCollectionMap.set("operations", "CustomDirectusOperation");
+    this.systemCollectionMap.set("versions", "CustomDirectusVersion");
+    this.systemCollectionMap.set("extensions", "CustomDirectusExtension");
+    this.systemCollectionMap.set("comments", "CustomDirectusComment");
+    this.systemCollectionMap.set("settings", "CustomDirectusSetting");
   }
 
   /**
    * Gets the correct type name for a system collection
    */
   private getSystemCollectionTypeName(collectionNameOrRef: string): string {
-    // If it's a short name like 'users', map it to 'DirectusUsers'
+    // If it's a short name like 'users', map it to 'DirectusUser'
     const mappedName = this.systemCollectionMap.get(collectionNameOrRef);
     if (mappedName) {
       return mappedName;
     }
 
-    // If it's a full name like 'directus_users', convert to 'DirectusUsers'
+    // If it's a full name like 'directus_users', convert to 'DirectusUser'
     if (collectionNameOrRef.startsWith("directus_")) {
       const baseName = collectionNameOrRef.replace("directus_", "");
       const mappedBaseName = this.systemCollectionMap.get(baseName);
       if (mappedBaseName) {
         return mappedBaseName;
       }
-      // If not found in map, use PascalCase
-      return toPascalCase(collectionNameOrRef);
+      // If not found in map, use PascalCase and make singular
+      const plural = toPascalCase(collectionNameOrRef);
+      return this.makeSingular(plural);
     }
 
-    // Not a system collection
-    return toPascalCase(collectionNameOrRef);
+    // Not a system collection - generate appropriate name
+    const pascalName = toPascalCase(collectionNameOrRef);
+    return this.makeSingular(pascalName);
+  }
+
+  /**
+   * Convert plural name to singular for type consistency
+   */
+  private makeSingular(name: string): string {
+    // Common plural endings
+    if (name.endsWith("ies")) {
+      return name.slice(0, -3) + "y";
+    } else if (name.endsWith("ses")) {
+      return name.slice(0, -2);
+    } else if (
+      name.endsWith("s") &&
+      !name.endsWith("ss") &&
+      !name.endsWith("us") &&
+      !name.endsWith("is")
+    ) {
+      return name.slice(0, -1);
+    }
+    return name;
   }
 
   /**
@@ -133,7 +158,9 @@ export class SchemaProcessor {
 
       const schema = (this.spec.components?.schemas?.[ref] ??
         {}) as OpenAPIV3.SchemaObject;
-      const refName = toPascalCase(ref);
+
+      // Generate the type name, using singular form
+      let refName = this.makeSingular(toPascalCase(ref));
 
       if (!this.processedTypes.has(refName)) {
         this.processedTypes.add(refName);
@@ -350,7 +377,7 @@ export class SchemaProcessor {
     ) {
       // For these fields, always use string | DirectusUsers
       if (this.options.useTypeReferences && !isSystemCollection) {
-        return `  ${propName}?: string | CustomDirectusUsers;\n`;
+        return `  ${propName}?: string | CustomDirectusUser;\n`;
       } else {
         return `  ${propName}?: string;\n`;
       }
@@ -427,7 +454,7 @@ export class SchemaProcessor {
     if (validCollections.length > 0) {
       source += `\nexport interface ${this.options.typeName} {\n`;
 
-      // First add non-system collections (as arrays)
+      // First add non-system collections
       const nonSystemCollections = validCollections.filter(
         ([collectionName]) => !collectionName.startsWith("directus_"),
       );
@@ -436,12 +463,14 @@ export class SchemaProcessor {
         const schema = (this.spec.components?.schemas?.[ref] ??
           {}) as ExtendedSchemaObject;
         const isSingleton = !!schema?.["x-singleton"];
-        const pascalCaseName = toPascalCase(ref);
 
-        source += `  ${collectionName}: ${pascalCaseName}${isSingleton ? "" : "[]"};\n`;
+        // Use singular type name
+        const typeName = this.makeSingular(toPascalCase(ref));
+
+        source += `  ${collectionName}: ${typeName}${isSingleton ? "" : "[]"};\n`;
       }
 
-      // Then add system collections (as arrays)
+      // Then add system collections
       const systemCollections = validCollections.filter(([collectionName]) =>
         collectionName.startsWith("directus_"),
       );
@@ -474,18 +503,21 @@ export class SchemaProcessor {
 
     // Check if the reference is to a system collection and use the correct name
     if (refTypeName === "Users") {
-      refTypeName = "CustomDirectusUsers";
+      refTypeName = "CustomDirectusUser";
     } else if (refTypeName === "Files") {
-      refTypeName = "CustomDirectusFiles";
+      refTypeName = "CustomDirectusFile";
     } else if (refTypeName === "Folders") {
-      refTypeName = "CustomDirectusFolders";
+      refTypeName = "CustomDirectusFolder";
     } else if (refTypeName === "Roles") {
-      refTypeName = "CustomDirectusRoles";
+      refTypeName = "CustomDirectusRole";
     } else {
       // For other potential system collections
       const systemTypeName = this.getSystemCollectionTypeName(refTypeName);
       if (systemTypeName !== refTypeName) {
         refTypeName = systemTypeName;
+      } else {
+        // Make sure we use singular form for referenced types
+        refTypeName = this.makeSingular(refTypeName);
       }
     }
 
@@ -519,18 +551,21 @@ export class SchemaProcessor {
 
         // Adjust for system collections
         if (refTypeName === "Users") {
-          refTypeName = "CustomDirectusUsers";
+          refTypeName = "CustomDirectusUser";
         } else if (refTypeName === "Files") {
-          refTypeName = "CustomDirectusFiles";
+          refTypeName = "CustomDirectusFile";
         } else if (refTypeName === "Folders") {
-          refTypeName = "CustomDirectusFolders";
+          refTypeName = "CustomDirectusFolder";
         } else if (refTypeName === "Roles") {
-          refTypeName = "CustomDirectusRoles";
+          refTypeName = "CustomDirectusRole";
         } else {
           // For other potential system collections
           const systemTypeName = this.getSystemCollectionTypeName(refTypeName);
           if (systemTypeName !== refTypeName) {
             refTypeName = systemTypeName;
+          } else {
+            // Make sure we use singular form for referenced types
+            refTypeName = this.makeSingular(refTypeName);
           }
         }
 
@@ -561,14 +596,17 @@ export class SchemaProcessor {
 
         // Adjust for system collections
         if (refTypeName === "Users") {
-          refTypeName = "CustomDirectusUsers";
+          refTypeName = "CustomDirectusUser";
         } else if (refTypeName === "Files") {
-          refTypeName = "CustomDirectusFiles";
+          refTypeName = "CustomDirectusFile";
         } else {
           // For other potential system collections
           const systemTypeName = this.getSystemCollectionTypeName(refTypeName);
           if (systemTypeName !== refTypeName) {
             refTypeName = systemTypeName;
+          } else {
+            // Make sure we use singular form for referenced types
+            refTypeName = this.makeSingular(refTypeName);
           }
         }
 
@@ -594,15 +632,18 @@ export class SchemaProcessor {
 
           // Adjust for system collections
           if (refTypeName === "Users") {
-            refTypeName = "CustomDirectusUsers";
+            refTypeName = "CustomDirectusUser";
           } else if (refTypeName === "Files") {
-            refTypeName = "CustomDirectusFiles";
+            refTypeName = "CustomDirectusFile";
           } else {
             // For other potential system collections
             const systemTypeName =
               this.getSystemCollectionTypeName(refTypeName);
             if (systemTypeName !== refTypeName) {
               refTypeName = systemTypeName;
+            } else {
+              // Make sure we use singular form for referenced types
+              refTypeName = this.makeSingular(refTypeName);
             }
           }
 
@@ -655,8 +696,10 @@ export class SchemaProcessor {
       if (systemTypeName) {
         return `  ${propName}?: string | ${systemTypeName};\n`;
       } else {
-        // Convert related collection name to PascalCase for type reference
-        const relatedTypeName = toPascalCase(relatedCollectionName);
+        // Convert related collection name to PascalCase for type reference and make singular
+        const relatedTypeName = this.makeSingular(
+          toPascalCase(relatedCollectionName),
+        );
 
         // Check if related type exists in spec components
         const relatedTypeExists =

@@ -32,6 +32,11 @@ const main = async (): Promise<void> => {
       type: "string",
       description: "Password for authentication",
     })
+    .option("token", {
+      alias: "k",
+      type: "string",
+      description: "Admin bearer token for authentication",
+    })
     .option("outFile", {
       alias: "o",
       type: "string",
@@ -49,16 +54,22 @@ const main = async (): Promise<void> => {
       description: "Use interface references for relation types",
       default: true,
     })
+
     .check((argv) => {
       if (argv.specFile) {
-        // If specFile is provided, host, email, and password are not required
+        // If specFile is provided, host, email, password, and token are not required
         return true;
-      } else if (argv.host && argv.email && argv.password) {
-        // If specFile is not provided, host, email, and password must be present
-        return true;
+      } else if (argv.host) {
+        // If host is provided, either token or both email and password must be present
+        if (argv.token || (argv.email && argv.password)) {
+          return true;
+        }
+        throw new Error(
+          "When using --host, either --token (-k) or both --email (-e) and --password (-p) must be specified.",
+        );
       }
       throw new Error(
-        "Either --specFile (-i) must be provided or --host (-h), --email (-e), and --password (-p) must all be specified.",
+        "Either --specFile (-i) must be provided or --host (-h) with appropriate authentication options must be specified.",
       );
     })
     .example(
@@ -67,7 +78,15 @@ const main = async (): Promise<void> => {
     )
     .example(
       "$0 -h https://example.com -e admin@example.com -p password -o ./types/schema.d.ts",
-      "Generate types from a live Directus server",
+      "Generate types from a live Directus server using email/password",
+    )
+    .example(
+      "$0 -h https://example.com -k your-static-token -o ./types/schema.d.ts",
+      "Generate types from a live Directus server using a static token",
+    )
+    .example(
+      "$0 -h https://example.com -k your-token -s -o ./types/schema.d.ts",
+      "Generate types with singular type names (Event instead of Events)",
     )
     .strict()
     .help()
@@ -83,6 +102,7 @@ const main = async (): Promise<void> => {
       host: argv.host,
       email: argv.email,
       password: argv.password,
+      token: argv.token,
     });
 
     // Generate TypeScript types

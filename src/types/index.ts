@@ -5,6 +5,7 @@ export type ReadSpecFileOptions = {
   readonly host?: string;
   readonly email?: string;
   readonly password?: string;
+  readonly token?: string; // Added token option for bearer authentication
 };
 
 export type GenerateTypeScriptOptions = {

@@ -25,14 +25,23 @@ export class SpecReader {
       return this.readFromFile(options.specFile);
     }
 
-    if (!options.host || !options.email || !options.password) {
+    if (!options.host) {
       throw new Error(
-        "Either specFile must be specified or host, email, and password must all be provided.",
+        "Either specFile must be specified or host must be provided.",
       );
     }
 
-    const loginResponse = await this.authenticate(options);
-    return this.fetchSpec(options.host, loginResponse.data.access_token);
+    // Use token if provided, otherwise use username/password
+    if (options.token) {
+      return this.fetchSpec(options.host, options.token);
+    } else if (options.email && options.password) {
+      const loginResponse = await this.authenticate(options);
+      return this.fetchSpec(options.host, loginResponse.data.access_token);
+    } else {
+      throw new Error(
+        "Either token or email and password must be provided for authentication.",
+      );
+    }
   }
 
   /**
