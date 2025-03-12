@@ -7,6 +7,8 @@ export class TypeNameManager {
   private systemCollectionMap: Map<string, string> = new Map();
   private collectionTypeMap: Map<string, string> = new Map();
   private processedTypes: Set<string> = new Set();
+  private knownCollections: Set<string> = new Set();
+  private knownRelations: Map<string, Set<string>> = new Map();
 
   constructor() {
     this.initializeSystemCollectionMap();
@@ -35,6 +37,43 @@ export class TypeNameManager {
     this.systemCollectionMap.set("extensions", "DirectusExtension");
     this.systemCollectionMap.set("comments", "DirectusComment");
     this.systemCollectionMap.set("settings", "DirectusSetting");
+
+    // Register these as known collections
+    for (const collection of this.systemCollectionMap.keys()) {
+      this.knownCollections.add(collection);
+      this.knownCollections.add(`directus_${collection}`);
+    }
+  }
+
+  /**
+   * Register a collection name
+   */
+  registerCollection(collectionName: string): void {
+    this.knownCollections.add(collectionName);
+  }
+
+  /**
+   * Register a relation field for a collection
+   */
+  registerRelation(collectionName: string, fieldName: string): void {
+    if (!this.knownRelations.has(collectionName)) {
+      this.knownRelations.set(collectionName, new Set());
+    }
+    this.knownRelations.get(collectionName)?.add(fieldName);
+  }
+
+  /**
+   * Check if a field is a known relation for a collection
+   */
+  isKnownRelation(fieldName: string, collectionName: string): boolean {
+    return !!this.knownRelations.get(collectionName)?.has(fieldName);
+  }
+
+  /**
+   * Check if a name is a known collection
+   */
+  isCollectionName(name: string): boolean {
+    return this.knownCollections.has(name);
   }
 
   /**
@@ -109,6 +148,9 @@ export class TypeNameManager {
    * Get type name for a collection
    */
   getTypeNameForCollection(collectionName: string): string {
+    // Register as a known collection
+    this.registerCollection(collectionName);
+
     // First check if we already have this collection mapped
     if (this.collectionTypeMap.has(collectionName)) {
       return this.collectionTypeMap.get(collectionName)!;
@@ -167,6 +209,7 @@ export class TypeNameManager {
       "directus_revisions",
       "directus_webhooks",
       "directus_settings",
+      "directus_operations",
     ];
 
     return numberIdCollections.includes(collection) ? "number" : "string";

@@ -1,7 +1,11 @@
 import type { OpenAPIV3_1 as OpenAPIV3 } from "openapi-types";
-import type { GenerateTypeScriptOptions, CollectionSchema } from "../types";
+import type {
+  GenerateTypeScriptOptions,
+  CollectionSchema,
+  ExtendedSchemaObject,
+} from "../types";
 import { TypeTracker } from "./TypeTracker";
-import { extractRefFromPathItem } from "../utils/schema";
+import { extractRefFromPathItem, isReferenceObject } from "../utils/schema";
 import { TypeNameManager } from "./TypeNameManager";
 import { PropertyGenerator } from "./PropertyGenerator";
 import { SystemCollectionManager } from "./SystemCollectionManager";
@@ -54,11 +58,120 @@ export class SchemaProcessor {
    * Processes the schema and generates TypeScript definitions
    */
   processSchema(): string {
+    // First, analyze relations in the schema
+    this.analyzeRelations();
+
     // Collect all schemas and process them
     const collectionSchemas = this.collectSchemas();
 
     // Generate the final type definitions
     return this.interfaceGenerator.generateTypeDefinitions(collectionSchemas);
+  }
+
+  /**
+   * Analyzes the OpenAPI schema to identify and register relations between collections
+   */
+  private analyzeRelations(): void {
+    // First, register all collection names
+    if (this.spec.components?.schemas) {
+      for (const [schemaName, schema] of Object.entries(
+        this.spec.components.schemas,
+      )) {
+        // Register the schema name as a collection
+        this.typeNameManager.registerCollection(schemaName);
+
+        // Check if there's an x-collection property
+        const extendedSchema = schema as ExtendedSchemaObject;
+        if (extendedSchema["x-collection"]) {
+          this.typeNameManager.registerCollection(
+            extendedSchema["x-collection"],
+          );
+        }
+      }
+    }
+
+    // Then, analyze path endpoints to identify relationships
+    if (this.spec.paths) {
+      for (const [path, pathItem] of Object.entries(this.spec.paths)) {
+        // Try to extract collection name from path
+        const collectionMatch = /^\/items\/(?<collection>[a-zA-Z0-9_]+)$/.exec(
+          path,
+        );
+        const collection = collectionMatch?.groups?.["collection"];
+
+        if (collection) {
+          // Find related reference
+          const ref = extractRefFromPathItem(
+            pathItem as OpenAPIV3.PathItemObject,
+          );
+          if (ref && this.spec.components?.schemas?.[ref]) {
+            const schema = this.spec.components.schemas[
+              ref
+            ] as OpenAPIV3.SchemaObject;
+
+            // Process properties to identify relation fields
+            if (schema.properties) {
+              this.processRelationProperties(collection, schema.properties);
+            }
+          }
+        }
+      }
+    }
+  }
+
+  /**
+   * Process properties of a schema to identify relation fields
+   */
+  private processRelationProperties(
+    collectionName: string,
+    properties: Record<
+      string,
+      OpenAPIV3.ReferenceObject | OpenAPIV3.SchemaObject
+    >,
+  ): void {
+    for (const [propName, propSchema] of Object.entries(properties)) {
+      // Check for direct references
+      if (isReferenceObject(propSchema)) {
+        const refMatch = /^#\/components\/schemas\/([^/]+)$/.exec(
+          propSchema.$ref,
+        );
+        if (refMatch && refMatch[1]) {
+          // This is a relation field
+          this.typeNameManager.registerRelation(collectionName, propName);
+        }
+      }
+      // Check for oneOf references
+      else if ("oneOf" in propSchema && Array.isArray(propSchema.oneOf)) {
+        const hasRef = propSchema.oneOf.some((item) => isReferenceObject(item));
+        if (hasRef) {
+          // This is a relation field
+          this.typeNameManager.registerRelation(collectionName, propName);
+        }
+      }
+      // Check for array of references
+      else if (
+        "type" in propSchema &&
+        propSchema.type === "array" &&
+        propSchema.items
+      ) {
+        if (isReferenceObject(propSchema.items)) {
+          // This is a relation field
+          this.typeNameManager.registerRelation(collectionName, propName);
+        } else if (
+          typeof propSchema.items === "object" &&
+          "oneOf" in propSchema.items &&
+          Array.isArray(propSchema.items.oneOf)
+        ) {
+          const hasRef = propSchema.items.oneOf.some((item) =>
+            isReferenceObject(item),
+          );
+          if (hasRef) {
+            // This is a relation field
+            this.typeNameManager.registerRelation(collectionName, propName);
+          }
+        }
+      }
+    }
   }
 
   /**

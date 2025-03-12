@@ -58,8 +58,12 @@ export class InterfaceGenerator {
     let interfaceStr = `export interface ${typeName} {\n`;
     const properties: string[] = [];
 
+    // Always add id field first for regular collections
+    interfaceStr += `  id: string;\n`;
+    properties.push("id");
+
     for (const [propName, propSchema] of nonSystemFields) {
-      if (typeof propSchema !== "object") continue;
+      if (typeof propSchema !== "object" || propName === "id") continue;
       properties.push(propName);
 
       interfaceStr += this.propertyGenerator.generatePropertyDefinition(
@@ -106,12 +110,7 @@ export class InterfaceGenerator {
         ([collectionName]) => !collectionName.startsWith("directus_"),
       );
 
-      for (const [collectionName, { ref }] of nonSystemCollections) {
-        const schema =
-          ref in collectionSchemas
-            ? collectionSchemas[ref].schema
-            : ({} as OpenAPIV3.SchemaObject);
-
+      for (const [collectionName, { schema }] of nonSystemCollections) {
         // Use the ExtendedSchemaObject type for checking x-singleton
         const extendedSchema =
           schema as import("../types").ExtendedSchemaObject;
@@ -125,14 +124,17 @@ export class InterfaceGenerator {
         source += `  ${collectionName}: ${cleanTypeName}${isSingleton ? "" : "[]"};\n`;
       }
 
-      // Then add system collections
+      // Then add system collections with custom fields
       const systemCollections = validCollections.filter(([collectionName]) =>
         collectionName.startsWith("directus_"),
       );
 
       for (const [collectionName, { ref }] of systemCollections) {
         const typeName = this.typeNameManager.getSystemCollectionTypeName(ref);
-        source += `  ${collectionName}: ${typeName}[];\n`;
+        // Skip system collections that have no custom fields (empty interfaces)
+        if (this.typeTracker.hasType(typeName)) {
+          source += `  ${collectionName}: ${typeName}[];\n`;
+        }
       }
 
       source += `};\n\n`;

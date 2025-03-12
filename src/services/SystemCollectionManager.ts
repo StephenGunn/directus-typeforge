@@ -44,7 +44,15 @@ export class SystemCollectionManager {
 
         if (!this.typeNameManager.hasProcessedType(typeName)) {
           this.typeNameManager.addProcessedType(typeName);
-          this.generateSystemCollectionInterface(schema, collection);
+
+          // Only generate the interface if there are custom fields
+          const customFields = Object.entries(schema.properties || {}).filter(
+            ([propName]) => !this.isSystemField(propName, collection),
+          );
+
+          if (customFields.length > 0) {
+            this.generateSystemCollectionInterface(schema, collection);
+          }
         }
 
         if (this.typeTracker.hasValidContent(typeName)) {
@@ -53,71 +61,8 @@ export class SystemCollectionManager {
       }
     }
 
-    // Ensure all standard system collections are defined even if not explicitly in the schema
-    this.ensureStandardSystemCollections(schemas);
-  }
-
-  /**
-   * Ensure all standard system collections are defined
-   */
-  private ensureStandardSystemCollections(
-    schemas: Record<string, CollectionSchema>,
-  ): void {
-    // For each standard system collection in our mapping
-    const processedTypes = this.typeNameManager.getProcessedTypes();
-
-    for (const collectionName of [
-      "directus_users",
-      "directus_files",
-      "directus_folders",
-      "directus_roles",
-      "directus_activity",
-      "directus_permissions",
-      "directus_fields",
-      "directus_collections",
-      "directus_presets",
-      "directus_relations",
-      "directus_revisions",
-      "directus_webhooks",
-      "directus_flows",
-      "directus_operations",
-      "directus_versions",
-      "directus_extensions",
-      "directus_comments",
-      "directus_settings",
-    ]) {
-      const typeName =
-        this.typeNameManager.getSystemCollectionTypeName(collectionName);
-
-      // If it's not already processed and not already in schemas
-      if (!processedTypes.has(typeName) && !schemas[collectionName]) {
-        this.typeNameManager.addProcessedType(typeName);
-
-        // Create a minimal schema for the system collection
-        const minimalSchema = {
-          type: "object",
-          properties: {
-            id: {
-              type:
-                this.typeNameManager.getSystemCollectionIdType(
-                  collectionName,
-                ) === "number"
-                  ? "integer"
-                  : "string",
-            },
-          },
-        } as OpenAPIV3.SchemaObject;
-
-        this.generateSystemCollectionInterface(minimalSchema, collectionName);
-
-        if (this.typeTracker.hasValidContent(typeName)) {
-          schemas[collectionName] = {
-            ref: collectionName,
-            schema: minimalSchema,
-          };
-        }
-      }
-    }
+    // If there are no system collections with custom fields, we don't generate anything
+    // This avoids having empty interfaces for system collections
   }
 
   /**
@@ -149,22 +94,17 @@ export class SystemCollectionManager {
       ([propName]) => !this.isSystemField(propName, collection),
     );
 
+    // Don't generate an interface if there are no custom fields
+    if (customFields.length === 0) {
+      return;
+    }
+
     // Use the system collection type name
     const typeName =
       this.typeNameManager.getSystemCollectionTypeName(collection);
     let interfaceStr = `export interface ${typeName} {\n`;
 
-    // Check if customFields already has an ID field
-    const hasCustomId = customFields.some(
-      ([propName]) => propName.toLowerCase() === "id",
-    );
-
-    // Only add the ID field if not already present in customFields
-    if (!hasCustomId) {
-      interfaceStr += `  id: ${this.typeNameManager.getSystemCollectionIdType(collection)};\n`;
-    }
-
-    const properties: string[] = hasCustomId ? [] : ["id"];
+    const properties: string[] = [];
 
     for (const [propName, propSchema] of customFields) {
       if (typeof propSchema !== "object") continue;
@@ -207,6 +147,7 @@ export class SystemCollectionManager {
 
   /**
    * Simple property type determination for system collections
+   * This preserves the special Directus types for fields
    */
   private determinePropertyType(
     propSchema: OpenAPIV3.SchemaObject | OpenAPIV3.ReferenceObject,
@@ -216,6 +157,43 @@ export class SystemCollectionManager {
       return "string"; // References in system collections are typically strings
     }
 
+    // Handle special Directus field types
+    const extendedSchema = propSchema as ExtendedSchemaObject;
+
+    // Check for datetime format
+    if (
+      propSchema.type === "string" &&
+      (propSchema.format === "date-time" ||
+        propSchema.format === "date" ||
+        propSchema.format === "timestamp")
+    ) {
+      return "'datetime'";
+    }
+
+    // Check for CSV format
+    if (
+      propSchema.type === "array" &&
+      typeof propSchema.items === "object" &&
+      !("$ref" in propSchema.items) &&
+      propSchema.items.type === "string"
+    ) {
+      // This is likely a CSV field
+      if (
+        propSchema.format === "csv" ||
+        extendedSchema["x-directus-type"] === "csv"
+      ) {
+        return "'csv'";
+      }
+    }
+
+    // Check for JSON field
+    if (
+      propSchema.format === "json" ||
+      extendedSchema["x-directus-type"] === "json"
+    ) {
+      return "'json'";
+    }
+
     // Now TypeScript knows propSchema is a SchemaObject
     if (propSchema.type === "integer" || propSchema.type === "number") {
       return "number";
@@ -223,8 +201,6 @@ export class SystemCollectionManager {
       return "any[]";
     } else if (propSchema.type === "object") {
       return "Record<string, unknown>";
-    } else if (propSchema.format === "json") {
-      return "unknown";
     } else {
       return (propSchema.type as string) || "unknown";
     }

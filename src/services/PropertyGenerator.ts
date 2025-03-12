@@ -1,6 +1,7 @@
 import type { OpenAPIV3_1 as OpenAPIV3 } from "openapi-types";
 import { isReferenceObject, isArraySchema } from "../utils/schema";
 import { TypeNameManager } from "./TypeNameManager";
+import type { ExtendedSchemaObject } from "../types";
 
 /**
  * Generates TypeScript property definitions for interfaces
@@ -23,6 +24,12 @@ export class PropertyGenerator {
     isSystemCollection: boolean = false,
     parentCollection?: string,
   ): string {
+    // Check for special field types used in Directus
+    const specialType = this.checkForSpecialFieldType(propSchema);
+    if (specialType) {
+      return `  ${propName}?: ${specialType};\n`;
+    }
+
     // Special handling for user references that commonly cause recursion
     if (
       propName === "user_created" ||
@@ -73,16 +80,96 @@ export class PropertyGenerator {
       );
     }
 
-    if (propName.endsWith("_id") || propName === "item") {
-      return this.generateIdPropertyDefinition(
+    // Check if this field is actually a relation
+    // We don't want to use the _id pattern blindly as it might match non-relation fields like "stripe_id"
+    if (this.isActualRelation(propName, parentCollection)) {
+      return this.generateRelationPropertyDefinition(
         propName,
-        propSchema,
         isSystemCollection,
         parentCollection,
       );
     }
 
     return this.generateBasicPropertyDefinition(propName, propSchema);
+  }
+
+  /**
+   * Check if field is a special Directus field type
+   */
+  private checkForSpecialFieldType(
+    propSchema: OpenAPIV3.SchemaObject | OpenAPIV3.ReferenceObject,
+  ): string | null {
+    if (isReferenceObject(propSchema)) {
+      return null;
+    }
+
+    // Cast to ExtendedSchemaObject to access additional properties
+    const extendedSchema = propSchema as ExtendedSchemaObject;
+
+    // Check for datetime format
+    if (
+      propSchema.type === "string" &&
+      (propSchema.format === "date-time" ||
+        propSchema.format === "date" ||
+        propSchema.format === "timestamp")
+    ) {
+      return "'datetime'";
+    }
+
+    // Check for CSV format
+    if (
+      propSchema.type === "array" &&
+      typeof propSchema.items === "object" &&
+      !isReferenceObject(propSchema.items) &&
+      propSchema.items.type === "string"
+    ) {
+      // This is likely a CSV field if there's a delimiter in the schema or format
+      if (
+        propSchema.format === "csv" ||
+        extendedSchema["x-directus-type"] === "csv"
+      ) {
+        return "'csv'";
+      }
+    }
+
+    // Check for JSON field
+    if (
+      propSchema.format === "json" ||
+      extendedSchema["x-directus-type"] === "json"
+    ) {
+      return "'json'";
+    }
+
+    return null;
+  }
+
+  /**
+   * Check if a field is actually a relation based on collection context
+   */
+  private isActualRelation(
+    propName: string,
+    parentCollection?: string,
+  ): boolean {
+    // First check if this is a known relation field pattern
+    if (propName === "item" || propName === "collection") {
+      return true;
+    }
+
+    // If parent collection is known to have this as a relation, return true
+    if (
+      parentCollection &&
+      this.typeNameManager.isKnownRelation(propName, parentCollection)
+    ) {
+      return true;
+    }
+
+    // If name ends with _id, check if there's a matching collection
+    if (propName.endsWith("_id")) {
+      const baseCollectionName = propName.slice(0, -3);
+      return this.typeNameManager.isCollectionName(baseCollectionName);
+    }
+
+    return false;
   }
 
   /**
@@ -129,6 +216,52 @@ export class PropertyGenerator {
         this.typeNameManager.getTypeNameForCollection(collectionName);
       typeName = this.typeNameManager.cleanTypeName(typeName);
       return `  ${propName}?: string | ${typeName};\n`;
+    }
+
+    return `  ${propName}?: string;\n`;
+  }
+
+  /**
+   * Generate property definition for relation fields that are not references
+   */
+  private generateRelationPropertyDefinition(
+    propName: string,
+    isSystemCollection: boolean = false,
+    parentCollection?: string,
+  ): string {
+    // First check for system type references in junction tables
+    const systemType = this.typeNameManager.getSystemTypeFromReference(
+      propName,
+      parentCollection,
+    );
+    if (systemType && this.useTypeReferences && !isSystemCollection) {
+      return `  ${propName}?: string | ${systemType};\n`;
+    }
+
+    // Extract potential related collection name from field name (removing _id suffix)
+    const relatedCollectionName = propName.endsWith("_id")
+      ? propName.replace(/_id$/, "")
+      : propName;
+
+    // For relation fields
+    if (
+      this.useTypeReferences &&
+      relatedCollectionName &&
+      !isSystemCollection
+    ) {
+      // Check if this is a reference to a system collection
+      if (this.typeNameManager.isSystemCollection(relatedCollectionName)) {
+        const typeName = this.typeNameManager.getSystemCollectionTypeName(
+          relatedCollectionName,
+        );
+        return `  ${propName}?: string | ${typeName};\n`;
+      } else {
+        // For regular collections, use clean singular type
+        const collectionTypeName =
+          this.typeNameManager.getTypeNameForCollection(relatedCollectionName);
+
+        return `  ${propName}?: string | ${collectionTypeName};\n`;
+      }
     }
 
     return `  ${propName}?: string;\n`;
@@ -273,60 +406,6 @@ export class PropertyGenerator {
     }
 
     return `  ${propName}?: unknown[];\n`;
-  }
-
-  /**
-   * Generate property definition for ID fields
-   */
-  private generateIdPropertyDefinition(
-    propName: string,
-    propSchema: OpenAPIV3.SchemaObject,
-    isSystemCollection: boolean = false,
-    parentCollection?: string,
-  ): string {
-    // First check for system type references in junction tables
-    const systemType = this.typeNameManager.getSystemTypeFromReference(
-      propName,
-      parentCollection,
-    );
-    if (systemType && this.useTypeReferences && !isSystemCollection) {
-      return `  ${propName}?: string | ${systemType};\n`;
-    }
-
-    if (propName === "item") {
-      return `  ${propName}?: ${propSchema.type ?? "unknown"};\n`;
-    }
-
-    // Extract potential related collection name from field name (removing _id suffix)
-    const relatedCollectionName = propName.endsWith("_id")
-      ? propName.replace(/_id$/, "")
-      : "";
-
-    // For ID fields that reference other collections
-    if (
-      this.useTypeReferences &&
-      relatedCollectionName &&
-      !isSystemCollection
-    ) {
-      // Check if this is a reference to a system collection
-      if (this.typeNameManager.isSystemCollection(relatedCollectionName)) {
-        const typeName = this.typeNameManager.getSystemCollectionTypeName(
-          relatedCollectionName,
-        );
-        return `  ${propName}?: string | ${typeName};\n`;
-      } else {
-        // For regular collections, use clean singular type and remove Items prefix
-        let collectionTypeName = this.typeNameManager.getTypeNameForCollection(
-          relatedCollectionName,
-        );
-        collectionTypeName =
-          this.typeNameManager.cleanTypeName(collectionTypeName);
-
-        return `  ${propName}?: string | ${collectionTypeName};\n`;
-      }
-    }
-
-    return `  ${propName}?: string;\n`;
   }
 
   /**

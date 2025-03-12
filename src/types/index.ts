@@ -21,6 +21,7 @@ export type TypeDefinition = {
 export type ExtendedSchemaObject = OpenAPIV3.SchemaObject & {
   "x-collection"?: string;
   "x-singleton"?: boolean;
+  "x-directus-type"?: string;
   "meta"?: {
     locked?: boolean;
   };
