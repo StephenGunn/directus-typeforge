@@ -24,6 +24,8 @@ export type ExtendedSchemaObject = OpenAPIV3.SchemaObject & {
   "meta"?: {
     locked?: boolean;
   };
+  "nullable"?: boolean;
+  "required"?: boolean;
 };
 
 export type FieldItems = {
