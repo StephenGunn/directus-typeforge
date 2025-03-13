@@ -4,7 +4,6 @@ import { findSystemCollections } from "../utils/schema";
 import { SYSTEM_FIELDS } from "../constants/system_fields";
 import { TypeTracker } from "./TypeTracker";
 import { TypeNameManager } from "./TypeNameManager";
-import { RelationshipTracker } from "./RelationshipTracker";
 
 /**
  * Handles processing of system collections
@@ -13,18 +12,15 @@ export class SystemCollectionManager {
   private spec: OpenAPIV3.Document;
   private typeTracker: TypeTracker;
   private typeNameManager: TypeNameManager;
-  private relationshipTracker: RelationshipTracker;
 
   constructor(
     spec: OpenAPIV3.Document,
     typeTracker: TypeTracker,
     typeNameManager: TypeNameManager,
-    relationshipTracker: RelationshipTracker,
   ) {
     this.spec = spec;
     this.typeTracker = typeTracker;
     this.typeNameManager = typeNameManager;
-    this.relationshipTracker = relationshipTracker;
   }
 
   /**
@@ -114,13 +110,9 @@ export class SystemCollectionManager {
       if (typeof propSchema !== "object") continue;
       properties.push(propName);
 
-      // Generate property (use an enhanced version for system collections)
+      // Generate property (use a simplified version for system collections)
       const isOptional = this.isNullable(propSchema);
-      const typeStr = this.determinePropertyType(
-        propSchema,
-        propName,
-        collection,
-      );
+      const typeStr = this.determinePropertyType(propSchema);
       interfaceStr += `  ${propName}${isOptional ? "?" : ""}: ${typeStr};\n`;
     }
 
@@ -154,13 +146,11 @@ export class SystemCollectionManager {
   }
 
   /**
-   * Enhanced property type determination for system collections
-   * Uses the RelationshipTracker to determine accurate types for relation fields
+   * Simple property type determination for system collections
+   * This preserves the special Directus types for fields
    */
   private determinePropertyType(
     propSchema: OpenAPIV3.SchemaObject | OpenAPIV3.ReferenceObject,
-    propName: string,
-    collectionName: string,
   ): string {
     // Reference objects should return their references
     if ("$ref" in propSchema) {
@@ -208,14 +198,9 @@ export class SystemCollectionManager {
     if (propSchema.type === "integer" || propSchema.type === "number") {
       return "number";
     } else if (propSchema.type === "array") {
-      // Use the relationship tracker to get the appropriate type for relation arrays
-      // This replaces the generic "any[]" with a more accurate type like "string[]" or "number[]"
-      const relationshipType =
-        this.relationshipTracker.getRelationshipFieldType(
-          collectionName,
-          propName,
-        );
-      return relationshipType;
+      // For array types in system collections, use string[] instead of any[]
+      // This is important for compatibility with the Directus SDK
+      return "string[]";
     } else if (propSchema.type === "object") {
       return "Record<string, unknown>";
     } else {

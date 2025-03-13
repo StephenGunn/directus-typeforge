@@ -49,7 +49,6 @@ export class SchemaProcessor {
       this.spec,
       this.typeTracker,
       this.typeNameManager,
-      this.relationshipTracker,
     );
     this.interfaceGenerator = new InterfaceGenerator(
       this.typeTracker,
