@@ -15,13 +15,17 @@ This tool is a fork and rewrite of
 
 - **Dynamic Generation:** Get types from a static schema file or an active
   Directus instance
-- **System Collections:** Automatically handle Directus system collections
+- **System Collections:** Automatically handle Directus system collections with
+  proper type definitions
 - **Authentication Options:** Support for email/password or bearer token
   authentication
 - **Relationships:** Represent collection relationships with proper TypeScript
   interfaces
-- **Singular Type Names:** Generate singular type names (e.g., `Event` for
-  `events` collection)
+- **Type Consistency:** Generate singular type names (e.g., `Event` for `events`
+  collection)
+- **Special Field Types:** Support for Directus-specific field types like
+  datetime, JSON, and CSV
+- **Customizable Output:** Control the type name generation and references
 
 ## Installation
 
@@ -136,19 +140,29 @@ export const initDirectus = () => {
 };
 ```
 
+## How It Works
+
+TypeForge analyzes your Directus schema through the OpenAPI specification,
+extracting collection information, field definitions, and relationship mappings:
+
+1. **Schema Reading:** Fetches the schema from a file or live Directus instance
+2. **Type Name Generation:** Creates appropriate interface names for collections
+3. **Relationship Analysis:** Identifies and properly types all relations
+4. **Property Generation:** Maps API fields to TypeScript types with proper
+   nullability
+5. **System Collection Handling:** Identifies and processes Directus system
+   collections
+6. **Root Type Creation:** Generates a root type that includes all collections
+
 ## Caveats
 
 - **System Collections:** System collections include ID fields and custom,
   user-created fields only. The Directus SDK should override the system fields
   with the correct types.
-- **JSON Repeaters:** JSON repeaters are not yet supported and are typed as
-  `unknown`. There is no data describing the structure of repeaters in the
-  OpenAPI schema.
-
-## Beta Disclaimer
-
-This is still a work in progress. It works on the projects it has been tested
-with, but use it at your own risk.
+- **JSON Repeaters:** JSON repeaters are typed as `unknown` since there's no
+  standardized structure information in the OpenAPI schema.
+- **Complex Field Types:** Some specialized Directus field types may not be
+  fully typed with their exact structure.
 
 ## License
 
