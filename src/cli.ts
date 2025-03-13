@@ -117,6 +117,7 @@ const main = async (): Promise<void> => {
     const ts = await generateTypeScript(spec, {
       typeName: argv.typeName,
       useTypeReferences: argv.useTypeReferences,
+      useTypes: argv.useTypes,
     });
 
     // Output the generated types
