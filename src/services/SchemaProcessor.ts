@@ -10,6 +10,7 @@ import { TypeNameManager } from "./TypeNameManager";
 import { PropertyGenerator } from "./PropertyGenerator";
 import { SystemCollectionManager } from "./SystemCollectionManager";
 import { InterfaceGenerator } from "./InterfaceGenerator";
+import { RelationshipTracker } from "./RelationshipTracker";
 
 /**
  * Processes OpenAPI schemas and generates TypeScript interfaces
@@ -18,6 +19,7 @@ export class SchemaProcessor {
   private spec: OpenAPIV3.Document;
   private typeTracker: TypeTracker;
   private typeNameManager: TypeNameManager;
+  private relationshipTracker: RelationshipTracker;
   private propertyGenerator: PropertyGenerator;
   private systemCollectionManager: SystemCollectionManager;
   private interfaceGenerator: InterfaceGenerator;
@@ -34,7 +36,10 @@ export class SchemaProcessor {
       useTypeReferences: options.useTypeReferences ?? true,
     };
 
-    // Initialize all components
+    // Initialize the relationship tracker first
+    this.relationshipTracker = new RelationshipTracker();
+
+    // Initialize all other components
     this.typeNameManager = new TypeNameManager();
     this.propertyGenerator = new PropertyGenerator(
       this.typeNameManager,
@@ -44,6 +49,7 @@ export class SchemaProcessor {
       this.spec,
       this.typeTracker,
       this.typeNameManager,
+      this.relationshipTracker,
     );
     this.interfaceGenerator = new InterfaceGenerator(
       this.typeTracker,
@@ -58,8 +64,11 @@ export class SchemaProcessor {
    * Processes the schema and generates TypeScript definitions
    */
   processSchema(): string {
-    // First, analyze relations in the schema
+    // First, analyze relationships in the schema
     this.analyzeRelations();
+
+    // Now analyze with the relationship tracker for more accurate typing
+    this.relationshipTracker.analyzeSchema(this.spec);
 
     // Collect all schemas and process them
     const collectionSchemas = this.collectSchemas();
