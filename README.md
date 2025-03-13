@@ -63,8 +63,8 @@ directus-typeforge [options]
 | `--useTypeReferences` | `-r`  | Use interface references for relation types | `true`           |
 | `--useTypes`          | `-u`  | Use 'type' instead of 'interface'           | `false`          |
 
-**only disable `--useTypeReferences` for very specific debugging reasons, it
-will make all of your relational types break.**
+**only disable `--useTypeReferences` for very specific debugging, it will make
+all of your relational types break.**
 
 ## Usage Examples
 
