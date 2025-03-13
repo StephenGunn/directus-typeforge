@@ -112,16 +112,18 @@ export interface Ticket {
   event?: string | Event;
 }
 
-// custom fields on system collections
-export interface CustomDirectusUser {
-  customer_id?: string;
+// system collections with custom fields
+export interface DirectusUser {
+  id: string;
+  stripe_customer_id?: string;
   verification_token?: string;
+  verification_url?: string;
 }
 
 export interface ApiCollections {
   events: Event[];
   tickets: Ticket[];
-  directus_users: CustomDirectusUser[];
+  directus_users: DirectusUser[];
 }
 ```
 
@@ -156,13 +158,16 @@ extracting collection information, field definitions, and relationship mappings:
 
 ## Caveats
 
-- **System Collections:** System collections include ID fields and custom,
-  user-created fields only. The Directus SDK should override the system fields
-  with the correct types.
+- **System Collections:** System collections are generated with standard names
+  like `DirectusUser` and include ID fields plus any custom, user-created
+  fields. Only system collections with custom fields are included in the output.
 - **JSON Repeaters:** JSON repeaters are typed as `unknown` since there's no
   standardized structure information in the OpenAPI schema.
-- **Complex Field Types:** Some specialized Directus field types may not be
-  fully typed with their exact structure.
+- **Complex Field Types:** Some specialized Directus field types are typed with
+  string literals (e.g., `'datetime'`, `'json'`, `'csv'`) to match the Directus
+  SDK's expected types.
+- **Special Types:** Certain system types like permissions and settings use
+  `unknown` for complex nested objects where the structure is variable.
 
 ## License
 
