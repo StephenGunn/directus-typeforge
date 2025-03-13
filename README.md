@@ -154,14 +154,14 @@ working with the SDK:
 async function getArticles() {
   return await client.request(
     readItems("articles", {
-      fields: ["id", "title", "content", "author"],
+      fields: ["id", "title", "content"],
       filter: { status: { _eq: "published" } },
     }),
   );
 }
 
 // This type will automatically be inferred as:
-// { id: string; title: string; content: string; author: string | Author }
+// { id: string; title: string; content: string; }
 export type Article = Awaited<ReturnType<typeof getArticles>>;
 ```
 
