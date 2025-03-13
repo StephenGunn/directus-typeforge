@@ -88,6 +88,9 @@ npx directus-typeforge -i directus.oas.json --typeName MySchema > schema.d.ts
 | `--typeName`          | `-t`  | Root type name                              | `ApiCollections` |
 | `--useTypeReferences` | `-r`  | Use interface references for relation types | `true`           |
 
+**only disable `--useTypeReferences` for very specific debugging reasons, it
+will make all of your relational types break.**
+
 ## Expected Output
 
 ```typescript
