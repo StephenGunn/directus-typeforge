@@ -12,15 +12,21 @@ export class SystemCollectionManager {
   private spec: OpenAPIV3.Document;
   private typeTracker: TypeTracker;
   private typeNameManager: TypeNameManager;
+  private options: {
+    useTypes?: boolean;
+  };
+  private referencedSystemCollections: Set<string> = new Set();
 
   constructor(
     spec: OpenAPIV3.Document,
     typeTracker: TypeTracker,
     typeNameManager: TypeNameManager,
+    options?: { useTypes?: boolean },
   ) {
     this.spec = spec;
     this.typeTracker = typeTracker;
     this.typeNameManager = typeNameManager;
+    this.options = options || { useTypes: false };
   }
 
   /**
@@ -45,13 +51,18 @@ export class SystemCollectionManager {
         if (!this.typeNameManager.hasProcessedType(typeName)) {
           this.typeNameManager.addProcessedType(typeName);
 
-          // Only generate the interface if there are custom fields
+          // Get custom fields (non-system fields)
           const customFields = Object.entries(schema.properties || {}).filter(
             ([propName]) => !this.isSystemField(propName, collection),
           );
 
+          // Generate the interface for system collections with custom fields
           if (customFields.length > 0) {
             this.generateSystemCollectionInterface(schema, collection);
+          } else if (this.isReferencedSystemCollection(typeName)) {
+            // Also generate minimal interface for system collections that are referenced
+            // but don't have custom fields
+            this.generateMinimalSystemCollectionInterface(collection);
           }
         }
 
@@ -61,15 +72,95 @@ export class SystemCollectionManager {
       }
     }
 
-    // If there are no system collections with custom fields, we don't generate anything
-    // This avoids having empty interfaces for system collections
+    // Generate minimal interfaces for essential system collections that may be referenced
+    // but not explicitly in the schema
+    this.generateMissingEssentialSystemCollections(schemas);
+  }
+
+  /**
+   * Registers a system collection as being referenced in custom types
+   */
+  registerReferencedSystemCollection(typeName: string): void {
+    this.referencedSystemCollections.add(typeName);
+  }
+
+  /**
+   * Checks if a system collection is referenced in any custom type
+   */
+  isReferencedSystemCollection(typeName: string): boolean {
+    return this.referencedSystemCollections.has(typeName);
+  }
+
+  /**
+   * Generates minimal interfaces for essential system collections
+   * that might be referenced but not have custom fields
+   */
+  generateMissingEssentialSystemCollections(
+    schemas: Record<string, CollectionSchema>,
+  ): void {
+    // List of essential system collection types that should always be included
+    const essentialSystemTypes = [
+      "DirectusFile",
+      "DirectusUser",
+      "DirectusFolder",
+      "DirectusRole",
+    ];
+
+    for (const systemType of essentialSystemTypes) {
+      if (!this.typeTracker.hasType(systemType)) {
+        const matchingCollection = Object.entries(schemas).find(
+          ([collection]) =>
+            this.typeNameManager.getSystemCollectionTypeName(collection) ===
+            systemType,
+        );
+
+        if (matchingCollection) {
+          // Collection exists in schemas but doesn't have an interface yet
+          this.generateMinimalSystemCollectionInterface(matchingCollection[0]);
+        } else {
+          // Collection doesn't exist in schemas, create a minimal interface anyway
+          // Determine the corresponding collection name for this type
+          const collectionName =
+            systemType === "DirectusFile"
+              ? "directus_files"
+              : systemType === "DirectusUser"
+                ? "directus_users"
+                : systemType === "DirectusFolder"
+                  ? "directus_folders"
+                  : systemType === "DirectusRole"
+                    ? "directus_roles"
+                    : null;
+
+          if (collectionName) {
+            this.generateMinimalSystemCollectionInterface(collectionName);
+          }
+        }
+      }
+    }
+  }
+
+  /**
+   * Generates a minimal interface for system collections with no custom fields
+   */
+  generateMinimalSystemCollectionInterface(collection: string): void {
+    const typeName =
+      this.typeNameManager.getSystemCollectionTypeName(collection);
+    const keyword = this.options.useTypes ? "type" : "interface";
+
+    // Determine correct ID type for this system collection
+    const idType = this.typeNameManager.getSystemCollectionIdType(collection);
+
+    const interfaceStr = `export ${keyword} ${typeName} ${this.options.useTypes ? "= " : ""}{
+  id: ${idType};
+}\n\n`;
+
+    this.typeTracker.addType(typeName, interfaceStr, ["id"]);
   }
 
   /**
    * Checks if a field is a system field
    */
   isSystemField(fieldName: string, collection?: string): boolean {
-    if (fieldName === "id") return false;
     if (!collection?.startsWith("directus_")) return false;
 
     if (collection && collection in SYSTEM_FIELDS) {
@@ -102,12 +193,19 @@ export class SystemCollectionManager {
     // Use the system collection type name
     const typeName =
       this.typeNameManager.getSystemCollectionTypeName(collection);
-    let interfaceStr = `export interface ${typeName} {\n`;
+    const keyword = this.options.useTypes ? "type" : "interface";
 
+    // We're going to add ID only once
     const properties: string[] = [];
+    const idType = this.typeNameManager.getSystemCollectionIdType(collection);
 
+    let interfaceStr = `export ${keyword} ${typeName} ${this.options.useTypes ? "= " : ""}{
+  id: ${idType};\n`;
+    properties.push("id");
+
+    // Add custom fields
     for (const [propName, propSchema] of customFields) {
-      if (typeof propSchema !== "object") continue;
+      if (typeof propSchema !== "object" || propName === "id") continue;
       properties.push(propName);
 
       // Generate property (use a simplified version for system collections)

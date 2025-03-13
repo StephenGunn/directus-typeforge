@@ -33,7 +33,7 @@ const main = async (): Promise<void> => {
       description: "Password for authentication",
     })
     .option("token", {
-      alias: "k",
+      alias: "t",
       type: "string",
       description: "Admin bearer token for authentication",
     })
@@ -43,7 +43,7 @@ const main = async (): Promise<void> => {
       description: "Output file for TypeScript types",
     })
     .option("typeName", {
-      alias: "t",
+      alias: "n",
       type: "string",
       description: "Root type name",
       default: "ApiCollections",
@@ -51,8 +51,15 @@ const main = async (): Promise<void> => {
     .option("useTypeReferences", {
       alias: "r",
       type: "boolean",
-      description: "Use interface references for relation types",
+      description:
+        "Use interface references for relation types - only turn off for debugging",
       default: true,
+    })
+    .option("useTypes", {
+      alias: "u",
+      type: "boolean",
+      description: "Use 'type' instead of 'interface' for type definitions",
+      default: false,
     })
 
     .check((argv) => {

@@ -26,6 +26,7 @@ export const SYSTEM_FIELDS = {
     "theme_light",
     "theme_light_overrides",
     "theme_dark_overrides",
+    "policies",
   ],
   directus_files: [
     "id",
@@ -53,6 +54,7 @@ export const SYSTEM_FIELDS = {
     "focal_point_x",
     "focal_point_y",
     "tus_id",
+    "tus_data",
   ],
   directus_folders: ["id", "name", "parent"],
   directus_roles: [
@@ -64,6 +66,8 @@ export const SYSTEM_FIELDS = {
     "app_access",
     "children",
     "users",
+    "parent",
+    "policies",
   ],
   directus_activity: [
     "id",
@@ -88,6 +92,7 @@ export const SYSTEM_FIELDS = {
     "presets",
     "fields",
     "limit",
+    "policy",
   ],
   directus_fields: [
     "id",
@@ -103,6 +108,12 @@ export const SYSTEM_FIELDS = {
     "note",
     "required",
     "validation_message",
+    "options",
+    "display_options",
+    "translations",
+    "conditions",
+    "group",
+    "validation",
   ],
   directus_collections: [
     "collection",
@@ -122,6 +133,9 @@ export const SYSTEM_FIELDS = {
     "collapse",
     "preview_url",
     "versioning",
+    "translations",
+    "item_duplication_fields",
+    "group",
   ],
   directus_presets: [
     "id",
@@ -136,6 +150,7 @@ export const SYSTEM_FIELDS = {
     "refresh_interval",
     "icon",
     "color",
+    "filter",
   ],
   directus_relations: [
     "id",
@@ -157,6 +172,7 @@ export const SYSTEM_FIELDS = {
     "data",
     "delta",
     "parent",
+    "version",
   ],
   directus_webhooks: [
     "id",
@@ -168,6 +184,8 @@ export const SYSTEM_FIELDS = {
     "actions",
     "collections",
     "was_active_before_deprecation",
+    "headers",
+    "migrated_flow",
   ],
   directus_flows: [
     "id",
@@ -181,6 +199,8 @@ export const SYSTEM_FIELDS = {
     "options",
     "date_created",
     "operations",
+    "operation",
+    "user_created",
   ],
   directus_operations: [
     "id",
@@ -194,6 +214,7 @@ export const SYSTEM_FIELDS = {
     "reject",
     "flow",
     "date_created",
+    "user_created",
   ],
   directus_versions: [
     "id",
@@ -204,9 +225,21 @@ export const SYSTEM_FIELDS = {
     "date_created",
     "date_updated",
     "delta",
+    "collection",
+    "user_created",
+    "user_updated",
   ],
   directus_extensions: ["id", "enabled", "folder", "source", "bundle"],
-  directus_comments: ["id", "item", "comment", "date_created", "date_updated"],
+  directus_comments: [
+    "id",
+    "item",
+    "comment",
+    "date_created",
+    "date_updated",
+    "collection",
+    "user_created",
+    "user_updated",
+  ],
   directus_settings: [
     "id",
     "project_name",
@@ -233,5 +266,13 @@ export const SYSTEM_FIELDS = {
     "report_feature_url",
     "public_registration",
     "public_registration_verify_email",
+    "basemaps",
+    "module_bar",
+    "custom_aspect_ratios",
+    "public_favicon",
+    "theme_light_overrides",
+    "theme_dark_overrides",
+    "public_registration_role",
+    "public_registration_email_filter",
   ],
 } as const;

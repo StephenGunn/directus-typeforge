@@ -1,6 +1,7 @@
 import type { OpenAPIV3_1 as OpenAPIV3 } from "openapi-types";
 import { isReferenceObject, isArraySchema } from "../utils/schema";
 import { TypeNameManager } from "./TypeNameManager";
+import { SystemCollectionManager } from "./SystemCollectionManager";
 import type { ExtendedSchemaObject } from "../types";
 
 /**
@@ -8,11 +9,17 @@ import type { ExtendedSchemaObject } from "../types";
  */
 export class PropertyGenerator {
   private typeNameManager: TypeNameManager;
+  private systemCollectionManager?: SystemCollectionManager;
   private useTypeReferences: boolean;
 
-  constructor(typeNameManager: TypeNameManager, useTypeReferences: boolean) {
+  constructor(
+    typeNameManager: TypeNameManager,
+    useTypeReferences: boolean,
+    systemCollectionManager?: SystemCollectionManager,
+  ) {
     this.typeNameManager = typeNameManager;
     this.useTypeReferences = useTypeReferences;
+    this.systemCollectionManager = systemCollectionManager;
   }
 
   /**
@@ -38,6 +45,8 @@ export class PropertyGenerator {
     ) {
       // For these fields, always use string | DirectusUser
       if (this.useTypeReferences && !isSystemCollection) {
+        // Register that DirectusUser is being referenced
+        this.registerReferencedSystemCollection("DirectusUser");
         return `  ${propName}?: string | DirectusUser;\n`;
       } else {
         return `  ${propName}?: string;\n`;
@@ -50,6 +59,8 @@ export class PropertyGenerator {
       parentCollection,
     );
     if (systemType && this.useTypeReferences && !isSystemCollection) {
+      // Register this system collection as being referenced
+      this.registerReferencedSystemCollection(systemType);
       return `  ${propName}?: string | ${systemType};\n`;
     }
 
@@ -91,6 +102,15 @@ export class PropertyGenerator {
     }
 
     return this.generateBasicPropertyDefinition(propName, propSchema);
+  }
+
+  /**
+   * Register a system collection as being referenced in a custom type
+   */
+  private registerReferencedSystemCollection(typeName: string): void {
+    if (this.systemCollectionManager) {
+      this.systemCollectionManager.registerReferencedSystemCollection(typeName);
+    }
   }
 
   /**
@@ -199,6 +219,8 @@ export class PropertyGenerator {
       parentCollection,
     );
     if (systemType && this.useTypeReferences) {
+      // Register the referenced system collection
+      this.registerReferencedSystemCollection(systemType);
       return `  ${propName}?: string | ${systemType};\n`;
     }
 
@@ -208,6 +230,9 @@ export class PropertyGenerator {
       if (this.typeNameManager.isSystemCollection(collectionName)) {
         const typeName =
           this.typeNameManager.getSystemCollectionTypeName(collectionName);
+
+        // Register the referenced system collection
+        this.registerReferencedSystemCollection(typeName);
         return `  ${propName}?: string | ${typeName};\n`;
       }
 
@@ -235,6 +260,8 @@ export class PropertyGenerator {
       parentCollection,
     );
     if (systemType && this.useTypeReferences && !isSystemCollection) {
+      // Register the referenced system collection
+      this.registerReferencedSystemCollection(systemType);
       return `  ${propName}?: string | ${systemType};\n`;
     }
 
@@ -254,6 +281,9 @@ export class PropertyGenerator {
         const typeName = this.typeNameManager.getSystemCollectionTypeName(
           relatedCollectionName,
         );
+
+        // Register the referenced system collection
+        this.registerReferencedSystemCollection(typeName);
         return `  ${propName}?: string | ${typeName};\n`;
       } else {
         // For regular collections, use clean singular type
@@ -282,6 +312,8 @@ export class PropertyGenerator {
       parentCollection,
     );
     if (systemType && this.useTypeReferences && !isSystemCollection) {
+      // Register the referenced system collection
+      this.registerReferencedSystemCollection(systemType);
       return `  ${propName}?: string | ${systemType};\n`;
     }
 
@@ -299,6 +331,9 @@ export class PropertyGenerator {
           if (this.typeNameManager.isSystemCollection(collectionName)) {
             const typeName =
               this.typeNameManager.getSystemCollectionTypeName(collectionName);
+
+            // Register the referenced system collection
+            this.registerReferencedSystemCollection(typeName);
             return `  ${propName}?: string | ${typeName};\n`;
           }
 
@@ -331,6 +366,8 @@ export class PropertyGenerator {
       parentCollection,
     );
     if (systemType && this.useTypeReferences && !isSystemCollection) {
+      // Register the referenced system collection
+      this.registerReferencedSystemCollection(systemType);
       return `  ${propName}?: string[] | ${systemType}[];\n`;
     }
 
@@ -349,6 +386,9 @@ export class PropertyGenerator {
           if (this.typeNameManager.isSystemCollection(collectionName)) {
             const typeName =
               this.typeNameManager.getSystemCollectionTypeName(collectionName);
+
+            // Register the referenced system collection
+            this.registerReferencedSystemCollection(typeName);
             return `  ${propName}?: string[] | ${typeName}[];\n`;
           }
 
@@ -381,6 +421,9 @@ export class PropertyGenerator {
                 this.typeNameManager.getSystemCollectionTypeName(
                   collectionName,
                 );
+
+              // Register the referenced system collection
+              this.registerReferencedSystemCollection(typeName);
               return `  ${propName}?: string[] | ${typeName}[];\n`;
             }
 

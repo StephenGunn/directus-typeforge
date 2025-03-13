@@ -11,6 +11,7 @@ export type ReadSpecFileOptions = {
 export type GenerateTypeScriptOptions = {
   readonly typeName: string;
   useTypeReferences?: boolean;
+  useTypes?: boolean;
 };
 
 export type TypeDefinition = {

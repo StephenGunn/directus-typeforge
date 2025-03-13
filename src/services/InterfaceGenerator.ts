@@ -14,6 +14,7 @@ export class InterfaceGenerator {
   private systemCollectionManager: SystemCollectionManager;
   private options: {
     typeName: string;
+    useTypes?: boolean;
   };
 
   constructor(
@@ -21,7 +22,10 @@ export class InterfaceGenerator {
     propertyGenerator: PropertyGenerator,
     typeNameManager: TypeNameManager,
     systemCollectionManager: SystemCollectionManager,
-    options: { typeName: string },
+    options: {
+      typeName: string;
+      useTypes?: boolean;
+    },
   ) {
     this.typeTracker = typeTracker;
     this.propertyGenerator = propertyGenerator;
@@ -50,16 +54,20 @@ export class InterfaceGenerator {
 
     if (nonSystemFields.length === 0) {
       // If no properties, add default id field for regular collections
-      const interfaceStr = `export interface ${typeName} {\n  id: string;\n}\n\n`;
+      const keyword = this.options.useTypes ? "type" : "interface";
+      const interfaceStr = `export ${keyword} ${typeName} ${this.options.useTypes ? "= " : ""}{
+  id: string;
+}\n\n`;
       this.typeTracker.addType(typeName, interfaceStr, ["id"]);
       return;
     }
 
-    let interfaceStr = `export interface ${typeName} {\n`;
+    const keyword = this.options.useTypes ? "type" : "interface";
+    let interfaceStr = `export ${keyword} ${typeName} ${this.options.useTypes ? "= " : ""}{
+  id: string;\n`;
     const properties: string[] = [];
 
     // Always add id field first for regular collections
-    interfaceStr += `  id: string;\n`;
     properties.push("id");
 
     for (const [propName, propSchema] of nonSystemFields) {
@@ -103,7 +111,8 @@ export class InterfaceGenerator {
 
     // Then create the main schema type
     if (validCollections.length > 0) {
-      source += `\nexport interface ${this.options.typeName} {\n`;
+      const keyword = this.options.useTypes ? "type" : "interface";
+      source += `\nexport ${keyword} ${this.options.typeName} ${this.options.useTypes ? "= " : ""}{`;
 
       // First add non-system collections
       const nonSystemCollections = validCollections.filter(
@@ -121,7 +130,7 @@ export class InterfaceGenerator {
           this.typeNameManager.getTypeNameForCollection(collectionName);
         const cleanTypeName = this.typeNameManager.cleanTypeName(typeName);
 
-        source += `  ${collectionName}: ${cleanTypeName}${isSingleton ? "" : "[]"};\n`;
+        source += `\n  ${collectionName}: ${cleanTypeName}${isSingleton ? "" : "[]"};`;
       }
 
       // Then add system collections with custom fields
@@ -133,11 +142,11 @@ export class InterfaceGenerator {
         const typeName = this.typeNameManager.getSystemCollectionTypeName(ref);
         // Skip system collections that have no custom fields (empty interfaces)
         if (this.typeTracker.hasType(typeName)) {
-          source += `  ${collectionName}: ${typeName}[];\n`;
+          source += `\n  ${collectionName}: ${typeName}[];`;
         }
       }
 
-      source += `};\n\n`;
+      source += `\n}\n\n`;
     }
 
     return source;

@@ -49,32 +49,6 @@ pnpm add -g directus-typeforge
 directus-typeforge [options]
 ```
 
-## Usage
-
-### From a Spec File
-
-```bash
-npx directus-typeforge -i directus.oas.json > schema.d.ts
-```
-
-### From a Live Server with Email/Password
-
-```bash
-npx directus-typeforge --host https://example.com --email user@example.com --password pass123 --outFile schema.d.ts
-```
-
-### From a Live Server with Admin Token
-
-```bash
-npx directus-typeforge --host https://example.com --token your-static-token --outFile schema.d.ts
-```
-
-### Custom Root Type Name
-
-```bash
-npx directus-typeforge -i directus.oas.json --typeName MySchema > schema.d.ts
-```
-
 ## Available Options
 
 | Option                | Alias | Description                                 | Default          |
@@ -83,13 +57,33 @@ npx directus-typeforge -i directus.oas.json --typeName MySchema > schema.d.ts
 | `--host`              | `-h`  | Directus host URL                           | -                |
 | `--email`             | `-e`  | Email for authentication                    | -                |
 | `--password`          | `-p`  | Password for authentication                 | -                |
-| `--token`             | `-k`  | Admin bearer token for authentication       | -                |
+| `--token`             | `-t`  | Admin bearer token for authentication       | -                |
 | `--outFile`           | `-o`  | Output file for TypeScript types            | -                |
-| `--typeName`          | `-t`  | Root type name                              | `ApiCollections` |
+| `--typeName`          | `-n`  | Root type name                              | `ApiCollections` |
 | `--useTypeReferences` | `-r`  | Use interface references for relation types | `true`           |
+| `--useTypes`          | `-u`  | Use 'type' instead of 'interface'           | `false`          |
 
 **only disable `--useTypeReferences` for very specific debugging reasons, it
 will make all of your relational types break.**
+
+## Usage Examples
+
+```bash
+# From a Spec File
+npx directus-typeforge -i directus.oas.json > schema.d.ts
+
+# From a Live Server with Email/Password
+npx directus-typeforge --host https://example.com --email user@example.com --password pass123 --outFile schema.d.ts
+
+# From a Live Server with Admin Token
+npx directus-typeforge --host https://example.com --token your-static-token --outFile schema.d.ts
+
+# Custom Root Type Name
+npx directus-typeforge -i directus.oas.json --typeName MySchema > schema.d.ts
+
+# Generate using 'type' instead of 'interface'
+npx directus-typeforge -i ./directus.oas.json -u -o ./types/schema.d.ts
+```
 
 ## Expected Output
 

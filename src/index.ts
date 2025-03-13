@@ -35,6 +35,7 @@ export async function generateTypeScript(
     const processor = new SchemaProcessor(spec, {
       typeName: options.typeName,
       useTypeReferences: options.useTypeReferences ?? true,
+      useTypes: options.useTypes ?? false,
     });
 
     const source = processor.processSchema();

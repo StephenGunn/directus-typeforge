@@ -14,25 +14,28 @@ export class TypeTracker {
    * Adds a type definition to the tracker
    */
   addType(name: string, content: string, properties: string[]) {
+    // Prevent duplicate properties, especially duplicate ID fields
+    const uniqueProperties = [...new Set(properties)];
+
     // For regular collections with no properties, add default id field
-    if (properties.length === 0 && !name.startsWith("Directus")) {
+    if (uniqueProperties.length === 0 && !name.startsWith("Directus")) {
       const idType = "string";
-      properties = ["id"];
+      uniqueProperties.push("id");
       content = `export interface ${name} {\n  id: ${idType};\n}\n\n`;
     }
 
     // For system collections that start with Directus prefix
-    if (name.startsWith("Directus") && properties.length === 0) {
+    if (name.startsWith("Directus") && uniqueProperties.length === 0) {
       // Add a default id property if none exists
       const idType =
         name === "DirectusPermissions" || name === "DirectusOperations"
           ? "number"
           : "string";
-      properties = ["id"];
+      uniqueProperties.push("id");
       content = `export interface ${name} {\n  id: ${idType};\n}\n\n`;
     }
 
-    this.types.set(name, { content, properties });
+    this.types.set(name, { content, properties: uniqueProperties });
   }
 
   /**
@@ -104,7 +107,10 @@ export class TypeTracker {
       properties = this.types.get(name)?.properties || [];
     }
 
-    this.types.set(name, { content, properties });
+    // Prevent duplicate properties
+    const uniqueProperties = [...new Set(properties)];
+
+    this.types.set(name, { content, properties: uniqueProperties });
     return true;
   }
 
