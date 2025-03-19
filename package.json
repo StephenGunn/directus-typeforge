@@ -58,6 +58,6 @@
   },
   "types": "./build/index.d.ts",
   "name": "directus-typeforge",
-  "version": "0.8.7",
+  "version": "0.9.0",
   "type": "module"
 }
