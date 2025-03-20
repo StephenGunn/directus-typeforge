@@ -11,14 +11,17 @@ export class PropertyGenerator {
   private typeNameManager: TypeNameManager;
   private systemCollectionManager?: SystemCollectionManager;
   private useTypeReferences: boolean;
+  private makeRequired: boolean;
 
   constructor(
     typeNameManager: TypeNameManager,
     useTypeReferences: boolean,
+    makeRequired: boolean = false,
     systemCollectionManager?: SystemCollectionManager,
   ) {
     this.typeNameManager = typeNameManager;
     this.useTypeReferences = useTypeReferences;
+    this.makeRequired = makeRequired;
     this.systemCollectionManager = systemCollectionManager;
   }
 
@@ -34,7 +37,7 @@ export class PropertyGenerator {
     // Check for special field types used in Directus
     const specialType = this.checkForSpecialFieldType(propSchema);
     if (specialType) {
-      return `  ${propName}?: ${specialType};\n`;
+      return `  ${propName}${this.makeRequired ? "" : "?"}: ${specialType};\n`;
     }
 
     // Special handling for user references that commonly cause recursion
@@ -47,9 +50,9 @@ export class PropertyGenerator {
       if (this.useTypeReferences && !isSystemCollection) {
         // Register that DirectusUser is being referenced
         this.registerReferencedSystemCollection("DirectusUser");
-        return `  ${propName}?: string | DirectusUser;\n`;
+        return `  ${propName}${this.makeRequired ? "" : "?"}: string | DirectusUser;\n`;
       } else {
-        return `  ${propName}?: string;\n`;
+        return `  ${propName}${this.makeRequired ? "" : "?"}: string;\n`;
       }
     }
 
@@ -61,7 +64,7 @@ export class PropertyGenerator {
     if (systemType && this.useTypeReferences && !isSystemCollection) {
       // Register this system collection as being referenced
       this.registerReferencedSystemCollection(systemType);
-      return `  ${propName}?: string | ${systemType};\n`;
+      return `  ${propName}${this.makeRequired ? "" : "?"}: string | ${systemType};\n`;
     }
 
     if (isReferenceObject(propSchema)) {
@@ -203,14 +206,14 @@ export class PropertyGenerator {
   ): string {
     const refMatch = /^#\/components\/schemas\/([^/]+)$/.exec(propSchema.$ref);
     if (!refMatch || !refMatch[1]) {
-      return `  ${propName}?: string;\n`;
+      return `  ${propName}${this.makeRequired ? "" : "?"}: string;\n`;
     }
 
     const collectionName = refMatch[1];
 
     // For system collections, use string type if it's a system collection definition
     if (isSystemCollection) {
-      return `  ${propName}?: string;\n`;
+      return `  ${propName}${this.makeRequired ? "" : "?"}: string;\n`;
     }
 
     // Check for system collection references in junction tables
@@ -221,7 +224,7 @@ export class PropertyGenerator {
     if (systemType && this.useTypeReferences) {
       // Register the referenced system collection
       this.registerReferencedSystemCollection(systemType);
-      return `  ${propName}?: string | ${systemType};\n`;
+      return `  ${propName}${this.makeRequired ? "" : "?"}: string | ${systemType};\n`;
     }
 
     // Otherwise, use the type reference if enabled
@@ -233,17 +236,17 @@ export class PropertyGenerator {
 
         // Register the referenced system collection
         this.registerReferencedSystemCollection(typeName);
-        return `  ${propName}?: string | ${typeName};\n`;
+        return `  ${propName}${this.makeRequired ? "" : "?"}: string | ${typeName};\n`;
       }
 
       // For regular collections, use clean singular names, removing any Items prefix
       let typeName =
         this.typeNameManager.getTypeNameForCollection(collectionName);
       typeName = this.typeNameManager.cleanTypeName(typeName);
-      return `  ${propName}?: string | ${typeName};\n`;
+      return `  ${propName}${this.makeRequired ? "" : "?"}: string | ${typeName};\n`;
     }
 
-    return `  ${propName}?: string;\n`;
+    return `  ${propName}${this.makeRequired ? "" : "?"}: string;\n`;
   }
 
   /**
@@ -262,7 +265,7 @@ export class PropertyGenerator {
     if (systemType && this.useTypeReferences && !isSystemCollection) {
       // Register the referenced system collection
       this.registerReferencedSystemCollection(systemType);
-      return `  ${propName}?: string | ${systemType};\n`;
+      return `  ${propName}${this.makeRequired ? "" : "?"}: string | ${systemType};\n`;
     }
 
     // Extract potential related collection name from field name (removing _id suffix)
@@ -284,17 +287,17 @@ export class PropertyGenerator {
 
         // Register the referenced system collection
         this.registerReferencedSystemCollection(typeName);
-        return `  ${propName}?: string | ${typeName};\n`;
+        return `  ${propName}${this.makeRequired ? "" : "?"}: string | ${typeName};\n`;
       } else {
         // For regular collections, use clean singular type
         const collectionTypeName =
           this.typeNameManager.getTypeNameForCollection(relatedCollectionName);
 
-        return `  ${propName}?: string | ${collectionTypeName};\n`;
+        return `  ${propName}${this.makeRequired ? "" : "?"}: string | ${collectionTypeName};\n`;
       }
     }
 
-    return `  ${propName}?: string;\n`;
+    return `  ${propName}${this.makeRequired ? "" : "?"}: string;\n`;
   }
 
   /**
@@ -314,7 +317,7 @@ export class PropertyGenerator {
     if (systemType && this.useTypeReferences && !isSystemCollection) {
       // Register the referenced system collection
       this.registerReferencedSystemCollection(systemType);
-      return `  ${propName}?: string | ${systemType};\n`;
+      return `  ${propName}${this.makeRequired ? "" : "?"}: string | ${systemType};\n`;
     }
 
     // Find a $ref in the oneOf array
@@ -334,21 +337,21 @@ export class PropertyGenerator {
 
             // Register the referenced system collection
             this.registerReferencedSystemCollection(typeName);
-            return `  ${propName}?: string | ${typeName};\n`;
+            return `  ${propName}${this.makeRequired ? "" : "?"}: string | ${typeName};\n`;
           }
 
           // For regular collections, use clean singular names, removing any Items prefix
           let typeName =
             this.typeNameManager.getTypeNameForCollection(collectionName);
           typeName = this.typeNameManager.cleanTypeName(typeName);
-          return `  ${propName}?: string | ${typeName};\n`;
+          return `  ${propName}${this.makeRequired ? "" : "?"}: string | ${typeName};\n`;
         }
       }
 
-      return `  ${propName}?: string;\n`;
+      return `  ${propName}${this.makeRequired ? "" : "?"}: string;\n`;
     }
 
-    return `  ${propName}?: unknown;\n`;
+    return `  ${propName}${this.makeRequired ? "" : "?"}: unknown;\n`;
   }
 
   /**
@@ -368,7 +371,7 @@ export class PropertyGenerator {
     if (systemType && this.useTypeReferences && !isSystemCollection) {
       // Register the referenced system collection
       this.registerReferencedSystemCollection(systemType);
-      return `  ${propName}?: string[] | ${systemType}[];\n`;
+      return `  ${propName}${this.makeRequired ? "" : "?"}: string[] | ${systemType}[];\n`;
     }
 
     // Handle arrays of references
@@ -389,18 +392,18 @@ export class PropertyGenerator {
 
             // Register the referenced system collection
             this.registerReferencedSystemCollection(typeName);
-            return `  ${propName}?: string[] | ${typeName}[];\n`;
+            return `  ${propName}${this.makeRequired ? "" : "?"}: string[] | ${typeName}[];\n`;
           }
 
           // For regular collections, remove Items prefix if present
           let typeName =
             this.typeNameManager.getTypeNameForCollection(collectionName);
           typeName = this.typeNameManager.cleanTypeName(typeName);
-          return `  ${propName}?: string[] | ${typeName}[];\n`;
+          return `  ${propName}${this.makeRequired ? "" : "?"}: string[] | ${typeName}[];\n`;
         }
       }
 
-      return `  ${propName}?: string[];\n`;
+      return `  ${propName}${this.makeRequired ? "" : "?"}: string[];\n`;
     }
 
     // Handle arrays with oneOf
@@ -424,31 +427,31 @@ export class PropertyGenerator {
 
               // Register the referenced system collection
               this.registerReferencedSystemCollection(typeName);
-              return `  ${propName}?: string[] | ${typeName}[];\n`;
+              return `  ${propName}${this.makeRequired ? "" : "?"}: string[] | ${typeName}[];\n`;
             }
 
             // For regular collections, remove Items prefix if present
             let typeName =
               this.typeNameManager.getTypeNameForCollection(collectionName);
             typeName = this.typeNameManager.cleanTypeName(typeName);
-            return `  ${propName}?: string[] | ${typeName}[];\n`;
+            return `  ${propName}${this.makeRequired ? "" : "?"}: string[] | ${typeName}[];\n`;
           }
         }
       }
 
-      return `  ${propName}?: string[];\n`;
+      return `  ${propName}${this.makeRequired ? "" : "?"}: string[];\n`;
     }
 
     // Handle simple array types
     if ("type" in propSchema.items) {
       if (propSchema.items.type === "integer") {
-        return `  ${propName}?: number[];\n`;
+        return `  ${propName}${this.makeRequired ? "" : "?"}: number[];\n`;
       } else if (propSchema.items.type === "string") {
-        return `  ${propName}?: string[];\n`;
+        return `  ${propName}${this.makeRequired ? "" : "?"}: string[];\n`;
       }
     }
 
-    return `  ${propName}?: unknown[];\n`;
+    return `  ${propName}${this.makeRequired ? "" : "?"}: unknown[];\n`;
   }
 
   /**
@@ -459,7 +462,10 @@ export class PropertyGenerator {
     propSchema: OpenAPIV3.SchemaObject,
   ): string {
     const baseType = propSchema.type === "integer" ? "number" : propSchema.type;
-    const optional = "nullable" in propSchema && propSchema.nullable === true;
+    const optional =
+      !this.makeRequired &&
+      "nullable" in propSchema &&
+      propSchema.nullable === true;
 
     // Handle special string formats
     if (

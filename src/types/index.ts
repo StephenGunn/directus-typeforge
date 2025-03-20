@@ -1,3 +1,4 @@
+// Update src/types/index.ts to add the new options
 import type { OpenAPIV3_1 as OpenAPIV3 } from "openapi-types";
 
 export type ReadSpecFileOptions = {
@@ -12,6 +13,8 @@ export type GenerateTypeScriptOptions = {
   readonly typeName: string;
   useTypeReferences?: boolean;
   useTypes?: boolean;
+  makeRequired?: boolean; // New flag to make all fields required
+  includeSystemFields?: boolean; // New flag to include all system fields
 };
 
 export type TypeDefinition = {

@@ -26,6 +26,8 @@ This tool is a fork and rewrite of
 - **Special Field Types:** Support for Directus-specific field types like
   datetime, JSON, and CSV
 - **Customizable Output:** Control the type name generation and references
+- **SDK Compatibility:** Options to generate types that work seamlessly with the
+  Directus SDK
 
 ## Installation
 
@@ -51,20 +53,31 @@ directus-typeforge [options]
 
 ## Available Options
 
-| Option                | Alias | Description                                 | Default          |
-| --------------------- | ----- | ------------------------------------------- | ---------------- |
-| `--specFile`          | `-i`  | Path to OpenAPI spec file                   | -                |
-| `--host`              | `-h`  | Directus host URL                           | -                |
-| `--email`             | `-e`  | Email for authentication                    | -                |
-| `--password`          | `-p`  | Password for authentication                 | -                |
-| `--token`             | `-t`  | Admin bearer token for authentication       | -                |
-| `--outFile`           | `-o`  | Output file for TypeScript types            | -                |
-| `--typeName`          | `-n`  | Root type name                              | `ApiCollections` |
-| `--useTypeReferences` | `-r`  | Use interface references for relation types | `true`           |
-| `--useTypes`          | `-u`  | Use 'type' instead of 'interface'           | `false`          |
+| Option                  | Alias | Description                                       | Default          |
+| ----------------------- | ----- | ------------------------------------------------- | ---------------- |
+| `--specFile`            | `-i`  | Path to OpenAPI spec file                         | -                |
+| `--host`                | `-h`  | Directus host URL                                 | -                |
+| `--email`               | `-e`  | Email for authentication                          | -                |
+| `--password`            | `-p`  | Password for authentication                       | -                |
+| `--token`               | `-t`  | Admin bearer token for authentication             | -                |
+| `--outFile`             | `-o`  | Output file for TypeScript types                  | -                |
+| `--typeName`            | `-n`  | Root type name                                    | `ApiCollections` |
+| `--useTypeReferences`   | `-r`  | Use interface references for relation types       | `true`           |
+| `--useTypes`            | `-u`  | Use 'type' instead of 'interface'                 | `false`          |
+| `--makeRequired`        | `-m`  | Make all fields required (no optional '?' syntax) | `false`          |
+| `--includeSystemFields` | `-s`  | Include all system fields in system collections   | `false`          |
 
 **only disable `--useTypeReferences` for very specific debugging, it will make
 all of your relational types break.**
+
+## SDK Compatibility Options
+
+For best compatibility with the Directus SDK:
+
+- Use `--makeRequired` (`-m`) to generate required fields without the optional
+  `?` modifier. The SDK handles nullability internally.
+- Use `--includeSystemFields` (`-s`) to include all system fields in system
+  collections, which improves type checking with SDK operations.
 
 ## Usage Examples
 
@@ -83,6 +96,9 @@ npx directus-typeforge -i directus.oas.json --typeName MySchema > schema.ts
 
 # Generate using 'type' instead of 'interface'
 npx directus-typeforge -i ./directus.oas.json -u -o ./types/schema.ts
+
+# Generate SDK-optimized types with required fields and full system collection fields
+npx directus-typeforge -i ./directus.oas.json -m -s -o ./types/schema.ts
 ```
 
 ## Expected Output
@@ -90,31 +106,42 @@ npx directus-typeforge -i ./directus.oas.json -u -o ./types/schema.ts
 ```typescript
 export interface Event {
   id: string;
-  title?: string;
-  start_date?: string;
-  event_registrations?: string[] | EventRegistration[];
+  title: string; // No optional ? with --makeRequired
+  start_date: string;
+  event_registrations: string[] | EventRegistration[];
 }
 
 export interface EventRegistration {
   id: string;
-  event?: string | Event;
-  user?: string | CustomDirectusUser;
+  event: string | Event;
+  user: string | DirectusUser;
 }
 
 export interface Ticket {
   id: string;
-  date_created?: string;
-  date_updated?: string;
-  title?: string;
-  event?: string | Event;
+  date_created: string;
+  date_updated: string;
+  title: string;
+  event: string | Event;
 }
 
-// system collections with custom fields
+// Full system collection with --includeSystemFields
 export interface DirectusUser {
   id: string;
-  stripe_customer_id?: string;
-  verification_token?: string;
-  verification_url?: string;
+  first_name: string;
+  last_name: string;
+  email: string;
+  password: string;
+  location: string;
+  title: string;
+  description: string;
+  avatar: string;
+  language: string;
+  // ...all system fields included
+  // Custom fields
+  stripe_customer_id: string;
+  verification_token: string;
+  verification_url: string;
 }
 
 export interface ApiCollections {
@@ -181,9 +208,6 @@ extracting collection information, field definitions, and relationship mappings:
 
 ## Caveats
 
-- **System Collections:** System collections are generated with standard names
-  like `DirectusUser` and include ID fields plus any custom, user-created
-  fields. Only system collections with custom fields are included in the output.
 - **JSON Repeaters:** JSON repeaters are typed as `unknown` since there's no
   standardized structure information in the OpenAPI schema.
 - **Complex Field Types:** Some specialized Directus field types are typed with

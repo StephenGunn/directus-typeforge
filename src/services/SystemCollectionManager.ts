@@ -14,6 +14,7 @@ export class SystemCollectionManager {
   private typeNameManager: TypeNameManager;
   private options: {
     useTypes?: boolean;
+    includeSystemFields?: boolean;
   };
   private referencedSystemCollections: Set<string> = new Set();
 
@@ -21,12 +22,12 @@ export class SystemCollectionManager {
     spec: OpenAPIV3.Document,
     typeTracker: TypeTracker,
     typeNameManager: TypeNameManager,
-    options?: { useTypes?: boolean },
+    options?: { useTypes?: boolean; includeSystemFields?: boolean },
   ) {
     this.spec = spec;
     this.typeTracker = typeTracker;
     this.typeNameManager = typeNameManager;
-    this.options = options || { useTypes: false };
+    this.options = options || { useTypes: false, includeSystemFields: false };
   }
 
   /**
@@ -51,18 +52,23 @@ export class SystemCollectionManager {
         if (!this.typeNameManager.hasProcessedType(typeName)) {
           this.typeNameManager.addProcessedType(typeName);
 
-          // Get custom fields (non-system fields)
-          const customFields = Object.entries(schema.properties || {}).filter(
-            ([propName]) => !this.isSystemField(propName, collection),
-          );
+          if (this.options.includeSystemFields) {
+            // Include all fields (both system and custom) when includeSystemFields is true
+            this.generateFullSystemCollectionInterface(schema, collection);
+          } else {
+            // Get only custom fields (non-system fields)
+            const customFields = Object.entries(schema.properties || {}).filter(
+              ([propName]) => !this.isSystemField(propName, collection),
+            );
 
-          // Generate the interface for system collections with custom fields
-          if (customFields.length > 0) {
-            this.generateSystemCollectionInterface(schema, collection);
-          } else if (this.isReferencedSystemCollection(typeName)) {
-            // Also generate minimal interface for system collections that are referenced
-            // but don't have custom fields
-            this.generateMinimalSystemCollectionInterface(collection);
+            // Generate the interface for system collections with custom fields
+            if (customFields.length > 0) {
+              this.generateSystemCollectionInterface(schema, collection);
+            } else if (this.isReferencedSystemCollection(typeName)) {
+              // Also generate minimal interface for system collections that are referenced
+              // but don't have custom fields
+              this.generateMinimalSystemCollectionInterface(collection);
+            }
           }
         }
 
@@ -155,6 +161,43 @@ export class SystemCollectionManager {
 }\n\n`;
 
     this.typeTracker.addType(typeName, interfaceStr, ["id"]);
+  }
+
+  /**
+   * Generates a full interface for system collections including all system fields
+   */
+  generateFullSystemCollectionInterface(
+    schema: OpenAPIV3.SchemaObject,
+    collection: string,
+  ): void {
+    if (!schema.properties) return;
+
+    // Use the system collection type name
+    const typeName =
+      this.typeNameManager.getSystemCollectionTypeName(collection);
+    const keyword = this.options.useTypes ? "type" : "interface";
+
+    // We're going to add ID only once
+    const properties: string[] = [];
+    const idType = this.typeNameManager.getSystemCollectionIdType(collection);
+
+    let interfaceStr = `export ${keyword} ${typeName} ${this.options.useTypes ? "= " : ""}{
+  id: ${idType};\n`;
+    properties.push("id");
+
+    // Add all fields, both system and custom
+    for (const [propName, propSchema] of Object.entries(schema.properties)) {
+      if (typeof propSchema !== "object" || propName === "id") continue;
+      properties.push(propName);
+
+      // Generate property (use a simplified version for system collections)
+      const isOptional = this.isNullable(propSchema);
+      const typeStr = this.determinePropertyType(propSchema);
+      interfaceStr += `  ${propName}${isOptional ? "?" : ""}: ${typeStr};\n`;
+    }
+
+    interfaceStr += "}\n\n";
+    this.typeTracker.addType(typeName, interfaceStr, properties);
   }
 
   /**

@@ -36,6 +36,8 @@ export async function generateTypeScript(
       typeName: options.typeName,
       useTypeReferences: options.useTypeReferences ?? true,
       useTypes: options.useTypes ?? false,
+      makeRequired: options.makeRequired ?? false,
+      includeSystemFields: options.includeSystemFields ?? false,
     });
 
     const source = processor.processSchema();

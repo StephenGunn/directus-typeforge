@@ -27,6 +27,8 @@ export class SchemaProcessor {
     typeName: string;
     useTypeReferences: boolean;
     useTypes: boolean;
+    makeRequired: boolean;
+    includeSystemFields: boolean;
   };
 
   constructor(spec: OpenAPIV3.Document, options: GenerateTypeScriptOptions) {
@@ -36,6 +38,8 @@ export class SchemaProcessor {
       typeName: options.typeName,
       useTypeReferences: options.useTypeReferences ?? true,
       useTypes: options.useTypes ?? false,
+      makeRequired: options.makeRequired ?? false,
+      includeSystemFields: options.includeSystemFields ?? false,
     };
 
     // Initialize the relationship tracker first
@@ -49,13 +53,17 @@ export class SchemaProcessor {
       this.spec,
       this.typeTracker,
       this.typeNameManager,
-      { useTypes: this.options.useTypes },
+      {
+        useTypes: this.options.useTypes,
+        includeSystemFields: this.options.includeSystemFields,
+      },
     );
 
     // Initialize the property generator with system collection manager reference
     this.propertyGenerator = new PropertyGenerator(
       this.typeNameManager,
       this.options.useTypeReferences,
+      this.options.makeRequired,
       this.systemCollectionManager,
     );
 

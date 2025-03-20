@@ -61,7 +61,18 @@ const main = async (): Promise<void> => {
       description: "Use 'type' instead of 'interface' for type definitions",
       default: false,
     })
-
+    .option("makeRequired", {
+      alias: "m",
+      type: "boolean",
+      description: "Make all fields required (no optional '?' syntax)",
+      default: false,
+    })
+    .option("includeSystemFields", {
+      alias: "s",
+      type: "boolean",
+      description: "Include all system fields in system collections",
+      default: false,
+    })
     .check((argv) => {
       if (argv.specFile) {
         // If specFile is provided, host, email, password, and token are not required
@@ -92,8 +103,12 @@ const main = async (): Promise<void> => {
       "Generate types from a live Directus server using a static token",
     )
     .example(
-      "$0 -h https://example.com -k your-token -s -o ./types/schema.d.ts",
-      "Generate types with singular type names (Event instead of Events)",
+      "$0 -i ./directus.oas.json -m -o ./types/schema.d.ts",
+      "Generate types with required fields (no optional modifiers)",
+    )
+    .example(
+      "$0 -i ./directus.oas.json -s -o ./types/schema.d.ts",
+      "Generate types with all system fields included",
     )
     .strict()
     .help()
@@ -118,6 +133,8 @@ const main = async (): Promise<void> => {
       typeName: argv.typeName,
       useTypeReferences: argv.useTypeReferences,
       useTypes: argv.useTypes,
+      makeRequired: argv.makeRequired,
+      includeSystemFields: argv.includeSystemFields,
     });
 
     // Output the generated types
