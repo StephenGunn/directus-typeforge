@@ -1,6 +1,6 @@
 import type { OpenAPIV3_1 as OpenAPIV3 } from "openapi-types";
 import type { CollectionSchema, ExtendedSchemaObject } from "../types";
-import { findSystemCollections } from "../utils/schema";
+import { findSystemCollections, isReferenceObject } from "../utils/schema";
 import { SYSTEM_FIELDS } from "../constants/system_fields";
 import { TypeTracker } from "./TypeTracker";
 import { TypeNameManager } from "./TypeNameManager";
@@ -14,7 +14,6 @@ export class SystemCollectionManager {
   private typeNameManager: TypeNameManager;
   private options: {
     useTypes?: boolean;
-    includeSystemFields?: boolean;
   };
   private referencedSystemCollections: Set<string> = new Set();
 
@@ -22,12 +21,40 @@ export class SystemCollectionManager {
     spec: OpenAPIV3.Document,
     typeTracker: TypeTracker,
     typeNameManager: TypeNameManager,
-    options?: { useTypes?: boolean; includeSystemFields?: boolean },
+    options?: { useTypes?: boolean },
   ) {
     this.spec = spec;
     this.typeTracker = typeTracker;
     this.typeNameManager = typeNameManager;
-    this.options = options || { useTypes: false, includeSystemFields: false };
+    this.options = options || { useTypes: false };
+  }
+
+  /**
+   * Determines the correct ID type from a schema
+   */
+  private determineIdType(
+    schema: OpenAPIV3.SchemaObject,
+    collectionName: string,
+  ): "string" | "number" {
+    // First check if it's a system collection with a known ID type
+    const idType =
+      this.typeNameManager.getSystemCollectionIdType(collectionName);
+    if (idType !== "string") {
+      return idType;
+    }
+
+    // Otherwise check schema properties
+    if (schema.properties && "id" in schema.properties) {
+      const idProperty = schema.properties.id;
+      if (
+        !isReferenceObject(idProperty) &&
+        (idProperty.type === "integer" || idProperty.type === "number")
+      ) {
+        return "number";
+      }
+    }
+
+    return "string";
   }
 
   /**
@@ -52,23 +79,18 @@ export class SystemCollectionManager {
         if (!this.typeNameManager.hasProcessedType(typeName)) {
           this.typeNameManager.addProcessedType(typeName);
 
-          if (this.options.includeSystemFields) {
-            // Include all fields (both system and custom) when includeSystemFields is true
-            this.generateFullSystemCollectionInterface(schema, collection);
-          } else {
-            // Get only custom fields (non-system fields)
-            const customFields = Object.entries(schema.properties || {}).filter(
-              ([propName]) => !this.isSystemField(propName, collection),
-            );
+          // Get custom fields (non-system fields)
+          const customFields = Object.entries(schema.properties || {}).filter(
+            ([propName]) => !this.isSystemField(propName, collection),
+          );
 
-            // Generate the interface for system collections with custom fields
-            if (customFields.length > 0) {
-              this.generateSystemCollectionInterface(schema, collection);
-            } else if (this.isReferencedSystemCollection(typeName)) {
-              // Also generate minimal interface for system collections that are referenced
-              // but don't have custom fields
-              this.generateMinimalSystemCollectionInterface(collection);
-            }
+          // Generate the interface for system collections with custom fields
+          if (customFields.length > 0) {
+            this.generateSystemCollectionInterface(schema, collection);
+          } else if (this.isReferencedSystemCollection(typeName)) {
+            // Also generate minimal interface for system collections that are referenced
+            // but don't have custom fields
+            this.generateMinimalSystemCollectionInterface(collection, schema);
           }
         }
 
@@ -122,7 +144,10 @@ export class SystemCollectionManager {
 
         if (matchingCollection) {
           // Collection exists in schemas but doesn't have an interface yet
-          this.generateMinimalSystemCollectionInterface(matchingCollection[0]);
+          this.generateMinimalSystemCollectionInterface(
+            matchingCollection[0],
+            matchingCollection[1].schema,
+          );
         } else {
           // Collection doesn't exist in schemas, create a minimal interface anyway
           // Determine the corresponding collection name for this type
@@ -148,56 +173,27 @@ export class SystemCollectionManager {
   /**
    * Generates a minimal interface for system collections with no custom fields
    */
-  generateMinimalSystemCollectionInterface(collection: string): void {
+  generateMinimalSystemCollectionInterface(
+    collection: string,
+    schema?: OpenAPIV3.SchemaObject,
+  ): void {
     const typeName =
       this.typeNameManager.getSystemCollectionTypeName(collection);
     const keyword = this.options.useTypes ? "type" : "interface";
 
     // Determine correct ID type for this system collection
-    const idType = this.typeNameManager.getSystemCollectionIdType(collection);
+    let idType = this.typeNameManager.getSystemCollectionIdType(collection);
+
+    // Check schema if available to determine the actual type
+    if (schema) {
+      idType = this.determineIdType(schema, collection);
+    }
 
     const interfaceStr = `export ${keyword} ${typeName} ${this.options.useTypes ? "= " : ""}{
   id: ${idType};
 }\n\n`;
 
     this.typeTracker.addType(typeName, interfaceStr, ["id"]);
-  }
-
-  /**
-   * Generates a full interface for system collections including all system fields
-   */
-  generateFullSystemCollectionInterface(
-    schema: OpenAPIV3.SchemaObject,
-    collection: string,
-  ): void {
-    if (!schema.properties) return;
-
-    // Use the system collection type name
-    const typeName =
-      this.typeNameManager.getSystemCollectionTypeName(collection);
-    const keyword = this.options.useTypes ? "type" : "interface";
-
-    // We're going to add ID only once
-    const properties: string[] = [];
-    const idType = this.typeNameManager.getSystemCollectionIdType(collection);
-
-    let interfaceStr = `export ${keyword} ${typeName} ${this.options.useTypes ? "= " : ""}{
-  id: ${idType};\n`;
-    properties.push("id");
-
-    // Add all fields, both system and custom
-    for (const [propName, propSchema] of Object.entries(schema.properties)) {
-      if (typeof propSchema !== "object" || propName === "id") continue;
-      properties.push(propName);
-
-      // Generate property (use a simplified version for system collections)
-      const isOptional = this.isNullable(propSchema);
-      const typeStr = this.determinePropertyType(propSchema);
-      interfaceStr += `  ${propName}${isOptional ? "?" : ""}: ${typeStr};\n`;
-    }
-
-    interfaceStr += "}\n\n";
-    this.typeTracker.addType(typeName, interfaceStr, properties);
   }
 
   /**
@@ -240,7 +236,9 @@ export class SystemCollectionManager {
 
     // We're going to add ID only once
     const properties: string[] = [];
-    const idType = this.typeNameManager.getSystemCollectionIdType(collection);
+
+    // Determine ID type by checking the schema
+    const idType = this.determineIdType(schema, collection);
 
     let interfaceStr = `export ${keyword} ${typeName} ${this.options.useTypes ? "= " : ""}{
   id: ${idType};\n`;

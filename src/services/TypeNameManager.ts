@@ -200,7 +200,7 @@ export class TypeNameManager {
   /**
    * Get the appropriate ID type for system collections
    */
-  getSystemCollectionIdType(collection: string): string {
+  getSystemCollectionIdType(collection: string): "string" | "number" {
     // Most system collections have string ids, except for specific ones
     const numberIdCollections = [
       "directus_permissions",

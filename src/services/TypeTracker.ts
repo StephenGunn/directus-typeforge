@@ -19,7 +19,7 @@ export class TypeTracker {
 
     // For regular collections with no properties, add default id field
     if (uniqueProperties.length === 0 && !name.startsWith("Directus")) {
-      const idType = "string";
+      const idType = "string"; // Default id type
       uniqueProperties.push("id");
       content = `export interface ${name} {\n  id: ${idType};\n}\n\n`;
     }

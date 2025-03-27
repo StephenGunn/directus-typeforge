@@ -27,8 +27,6 @@ export class SchemaProcessor {
     typeName: string;
     useTypeReferences: boolean;
     useTypes: boolean;
-    makeRequired: boolean;
-    includeSystemFields: boolean;
   };
 
   constructor(spec: OpenAPIV3.Document, options: GenerateTypeScriptOptions) {
@@ -38,8 +36,6 @@ export class SchemaProcessor {
       typeName: options.typeName,
       useTypeReferences: options.useTypeReferences ?? true,
       useTypes: options.useTypes ?? false,
-      makeRequired: options.makeRequired ?? false,
-      includeSystemFields: options.includeSystemFields ?? false,
     };
 
     // Initialize the relationship tracker first
@@ -53,18 +49,13 @@ export class SchemaProcessor {
       this.spec,
       this.typeTracker,
       this.typeNameManager,
-      {
-        useTypes: this.options.useTypes,
-        includeSystemFields: this.options.includeSystemFields,
-      },
+      { useTypes: this.options.useTypes },
     );
 
-    // Initialize the property generator with system collection manager reference
+    // Initialize the property generator
     this.propertyGenerator = new PropertyGenerator(
       this.typeNameManager,
       this.options.useTypeReferences,
-      this.options.makeRequired,
-      this.systemCollectionManager,
     );
 
     // Initialize the interface generator
@@ -108,6 +99,25 @@ export class SchemaProcessor {
       )) {
         // Register the schema name as a collection
         this.typeNameManager.registerCollection(schemaName);
+
+        // Check for ID field type and register collection with correct ID type
+        if (
+          !isReferenceObject(schema) &&
+          schema.properties &&
+          "id" in schema.properties
+        ) {
+          const idProp = schema.properties.id;
+          if (
+            !isReferenceObject(idProp) &&
+            (idProp.type === "integer" || idProp.type === "number")
+          ) {
+            // Register with the relationship tracker that this collection has a number ID
+            this.relationshipTracker.registerCollection(schemaName, "number");
+          } else {
+            // Register with default string ID
+            this.relationshipTracker.registerCollection(schemaName, "string");
+          }
+        }
 
         // Check if there's an x-collection property
         const extendedSchema = schema as ExtendedSchemaObject;
