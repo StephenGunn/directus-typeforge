@@ -14,6 +14,8 @@ export class SystemCollectionManager {
   private typeNameManager: TypeNameManager;
   private options: {
     useTypes?: boolean;
+    includeSystemFields?: boolean;
+    makeRequired?: boolean;
   };
   private referencedSystemCollections: Set<string> = new Set();
 
@@ -21,12 +23,20 @@ export class SystemCollectionManager {
     spec: OpenAPIV3.Document,
     typeTracker: TypeTracker,
     typeNameManager: TypeNameManager,
-    options?: { useTypes?: boolean },
+    options?: {
+      useTypes?: boolean;
+      includeSystemFields?: boolean;
+      makeRequired?: boolean;
+    },
   ) {
     this.spec = spec;
     this.typeTracker = typeTracker;
     this.typeNameManager = typeNameManager;
-    this.options = options || { useTypes: false };
+    this.options = options || {
+      useTypes: false,
+      includeSystemFields: false,
+      makeRequired: false,
+    };
   }
 
   /**
@@ -79,18 +89,23 @@ export class SystemCollectionManager {
         if (!this.typeNameManager.hasProcessedType(typeName)) {
           this.typeNameManager.addProcessedType(typeName);
 
-          // Get custom fields (non-system fields)
-          const customFields = Object.entries(schema.properties || {}).filter(
-            ([propName]) => !this.isSystemField(propName, collection),
-          );
+          if (this.options.includeSystemFields) {
+            // Generate interface with all system fields included
+            this.generateFullSystemCollectionInterface(schema, collection);
+          } else {
+            // Get custom fields (non-system fields)
+            const customFields = Object.entries(schema.properties || {}).filter(
+              ([propName]) => !this.isSystemField(propName, collection),
+            );
 
-          // Generate the interface for system collections with custom fields
-          if (customFields.length > 0) {
-            this.generateSystemCollectionInterface(schema, collection);
-          } else if (this.isReferencedSystemCollection(typeName)) {
-            // Also generate minimal interface for system collections that are referenced
-            // but don't have custom fields
-            this.generateMinimalSystemCollectionInterface(collection, schema);
+            // Generate the interface for system collections with custom fields
+            if (customFields.length > 0) {
+              this.generateSystemCollectionInterface(schema, collection);
+            } else if (this.isReferencedSystemCollection(typeName)) {
+              // Also generate minimal interface for system collections that are referenced
+              // but don't have custom fields
+              this.generateMinimalSystemCollectionInterface(collection, schema);
+            }
           }
         }
 
@@ -144,10 +159,17 @@ export class SystemCollectionManager {
 
         if (matchingCollection) {
           // Collection exists in schemas but doesn't have an interface yet
-          this.generateMinimalSystemCollectionInterface(
-            matchingCollection[0],
-            matchingCollection[1].schema,
-          );
+          if (this.options.includeSystemFields) {
+            this.generateFullSystemCollectionInterface(
+              matchingCollection[1].schema,
+              matchingCollection[0],
+            );
+          } else {
+            this.generateMinimalSystemCollectionInterface(
+              matchingCollection[0],
+              matchingCollection[1].schema,
+            );
+          }
         } else {
           // Collection doesn't exist in schemas, create a minimal interface anyway
           // Determine the corresponding collection name for this type
@@ -211,6 +233,66 @@ export class SystemCollectionManager {
   }
 
   /**
+   * Generates a full interface for a system collection including all system fields
+   */
+  generateFullSystemCollectionInterface(
+    schema: OpenAPIV3.SchemaObject,
+    collection: string,
+  ): void {
+    if (!schema.properties) return;
+
+    // Use the system collection type name
+    const typeName =
+      this.typeNameManager.getSystemCollectionTypeName(collection);
+    const keyword = this.options.useTypes ? "type" : "interface";
+
+    // We're going to start with the ID field
+    const properties: string[] = [];
+
+    // Determine ID type by checking the schema
+    const idType = this.determineIdType(schema, collection);
+
+    let interfaceStr = `export ${keyword} ${typeName} ${this.options.useTypes ? "= " : ""}{
+  id: ${idType};\n`;
+    properties.push("id");
+
+    // Get all system fields for this collection from our constant mapping
+    const systemFieldsList =
+      collection in SYSTEM_FIELDS
+        ? SYSTEM_FIELDS[collection as keyof typeof SYSTEM_FIELDS]
+        : [];
+
+    // Add other property fields based on schema and system fields
+    for (const [propName, propSchema] of Object.entries(schema.properties)) {
+      if (typeof propSchema !== "object" || propName === "id") continue;
+      properties.push(propName);
+
+      // Generate property with appropriate type (simplified for system collections)
+      const isOptional = this.options.makeRequired
+        ? false
+        : this.isNullable(propSchema);
+      const typeStr = this.determinePropertyType(propSchema);
+      interfaceStr += `  ${propName}${isOptional ? "?" : ""}: ${typeStr};\n`;
+    }
+
+    // Add system fields that are not already in the schema
+    if (this.options.includeSystemFields && systemFieldsList.length > 0) {
+      for (const fieldName of systemFieldsList) {
+        // Skip fields already added
+        if (fieldName === "id" || fieldName in schema.properties) continue;
+
+        properties.push(fieldName);
+        // Use string as default type for system fields not in schema
+        const isOptional = !this.options.makeRequired;
+        interfaceStr += `  ${fieldName}${isOptional ? "?" : ""}: string;\n`;
+      }
+    }
+
+    interfaceStr += "}\n\n";
+    this.typeTracker.addType(typeName, interfaceStr, properties);
+  }
+
+  /**
    * Generates interface for system collection's custom fields
    */
   generateSystemCollectionInterface(
@@ -250,7 +332,9 @@ export class SystemCollectionManager {
       properties.push(propName);
 
       // Generate property (use a simplified version for system collections)
-      const isOptional = this.isNullable(propSchema);
+      const isOptional = this.options.makeRequired
+        ? false
+        : this.isNullable(propSchema);
       const typeStr = this.determinePropertyType(propSchema);
       interfaceStr += `  ${propName}${isOptional ? "?" : ""}: ${typeStr};\n`;
     }
