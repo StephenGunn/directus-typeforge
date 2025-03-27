@@ -111,10 +111,31 @@ export class RelationshipTracker {
       for (const [schemaName, schema] of Object.entries(
         spec.components.schemas,
       )) {
-        // Register each schema as a collection with default string ID
-        this.registerCollection(schemaName);
+        // Skip reference objects
+        if (isReferenceObject(schema)) continue;
 
-        // Check for system collections to determine correct ID type
+        // Check for ID field to determine the ID type
+        if (schema.properties && "id" in schema.properties) {
+          const idProp = schema.properties.id;
+
+          if (!isReferenceObject(idProp)) {
+            // If ID is integer or number, register as number ID
+            if (idProp.type === "integer" || idProp.type === "number") {
+              this.registerCollection(schemaName, "number");
+            } else {
+              // Otherwise register with string ID
+              this.registerCollection(schemaName, "string");
+            }
+          } else {
+            // Default to string if ID is a reference
+            this.registerCollection(schemaName, "string");
+          }
+        } else {
+          // No ID property found, register with default string ID
+          this.registerCollection(schemaName, "string");
+        }
+
+        // Register system collections with their known ID types
         if (
           schemaName.startsWith("directus_") &&
           this.numberIdCollections.has(schemaName)
@@ -125,12 +146,38 @@ export class RelationshipTracker {
         // Check for x-collection property
         const extendedSchema = schema as ExtendedSchemaObject;
         if (extendedSchema["x-collection"]) {
-          this.registerCollection(extendedSchema["x-collection"]);
+          // Also register the x-collection value with the same ID type
+          const idType = this.getCollectionIdType(schemaName);
+          this.registerCollection(extendedSchema["x-collection"], idType);
         }
 
         // Analyze schema properties for relationships
-        if (!isReferenceObject(schema) && schema.properties) {
+        if (schema.properties) {
           this.analyzeSchemaProperties(schemaName, schema.properties);
+        }
+      }
+    }
+
+    // Then examine paths for more relationship clues
+    if (spec.paths) {
+      for (const [path, pathItem] of Object.entries(spec.paths)) {
+        if (!pathItem || typeof pathItem !== "object") continue;
+
+        // Check for collection patterns in paths
+        const collectionMatch = /^\/items\/([a-zA-Z0-9_]+)/.exec(path);
+        if (collectionMatch && collectionMatch[1]) {
+          const collectionName = collectionMatch[1];
+
+          // Ensure we have this collection registered
+          if (!this.collectionIdTypes.has(collectionName)) {
+            // Default to string ID unless we know it's a system collection with number ID
+            const idType =
+              collectionName.startsWith("directus_") &&
+              this.numberIdCollections.has(collectionName)
+                ? "number"
+                : "string";
+            this.registerCollection(collectionName, idType);
+          }
         }
       }
     }
@@ -152,7 +199,7 @@ export class RelationshipTracker {
 
       // Handle direct references (M2O relationships)
       if (isReferenceObject(propSchema)) {
-        const refMatch = /^#\/components\/schemas\/([^/]+)$/.exec(
+        const refMatch = /^#\/components\/schemas\/(?<ref>[a-zA-Z0-9_]+)$/.exec(
           propSchema.$ref,
         );
         if (refMatch && refMatch[1]) {
@@ -163,9 +210,10 @@ export class RelationshipTracker {
       // Handle array references (O2M or M2M relationships)
       else if (propSchema.type === "array" && propSchema.items) {
         if (isReferenceObject(propSchema.items)) {
-          const refMatch = /^#\/components\/schemas\/([^/]+)$/.exec(
-            propSchema.items.$ref,
-          );
+          const refMatch =
+            /^#\/components\/schemas\/(?<ref>[a-zA-Z0-9_]+)$/.exec(
+              propSchema.items.$ref,
+            );
           if (refMatch && refMatch[1]) {
             const targetCollection = refMatch[1];
             // Likely a O2M relationship
@@ -188,9 +236,10 @@ export class RelationshipTracker {
           if (Array.isArray(oneOfArray)) {
             for (const item of oneOfArray) {
               if (isReferenceObject(item)) {
-                const refMatch = /^#\/components\/schemas\/([^/]+)$/.exec(
-                  item.$ref,
-                );
+                const refMatch =
+                  /^#\/components\/schemas\/(?<ref>[a-zA-Z0-9_]+)$/.exec(
+                    item.$ref,
+                  );
                 if (refMatch && refMatch[1]) {
                   const targetCollection = refMatch[1];
                   // This is likely a M2M relationship
@@ -211,9 +260,8 @@ export class RelationshipTracker {
       else if ("oneOf" in propSchema && Array.isArray(propSchema.oneOf)) {
         for (const item of propSchema.oneOf) {
           if (isReferenceObject(item)) {
-            const refMatch = /^#\/components\/schemas\/([^/]+)$/.exec(
-              item.$ref,
-            );
+            const refMatch =
+              /^#\/components\/schemas\/(?<ref>[a-zA-Z0-9_]+)$/.exec(item.$ref);
             if (refMatch && refMatch[1]) {
               const targetCollection = refMatch[1];
               this.registerRelationship(
@@ -326,5 +374,15 @@ export class RelationshipTracker {
         `${rel.sourceCollection}.${rel.sourceField} -> ${rel.targetCollection} ${rel.isM2M ? "(M2M)" : rel.isO2M ? "(O2M)" : ""}`,
       );
     }
+  }
+
+  /**
+   * Debug method to print all tracked ID types
+   */
+  debugPrintIdTypes(): void {
+    console.log("Collection ID Types:");
+    this.collectionIdTypes.forEach((type, collection) => {
+      console.log(`${collection}: ${type}`);
+    });
   }
 }

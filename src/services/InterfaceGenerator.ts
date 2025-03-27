@@ -3,6 +3,7 @@ import { TypeTracker } from "./TypeTracker";
 import { PropertyGenerator } from "./PropertyGenerator";
 import { TypeNameManager } from "./TypeNameManager";
 import { SystemCollectionManager } from "./SystemCollectionManager";
+import { isReferenceObject } from "../utils/schema";
 
 /**
  * Generates TypeScript interfaces for collections
@@ -35,6 +36,35 @@ export class InterfaceGenerator {
   }
 
   /**
+   * Determines the correct ID type from schema properties
+   */
+  private determineIdType(
+    schema: OpenAPIV3.SchemaObject,
+    collectionName?: string,
+  ): "string" | "number" {
+    // Check if schema has an ID property
+    if (schema.properties && "id" in schema.properties) {
+      const idProperty = schema.properties.id;
+
+      // If it's not a reference object and has a type
+      if (!isReferenceObject(idProperty)) {
+        // Check if it's a number/integer type
+        if (idProperty.type === "integer" || idProperty.type === "number") {
+          return "number";
+        }
+      }
+    }
+
+    // For system collections, check their known ID types
+    if (collectionName && collectionName.startsWith("directus_")) {
+      return this.typeNameManager.getSystemCollectionIdType(collectionName);
+    }
+
+    // Default to string for all other cases
+    return "string";
+  }
+
+  /**
    * Generates TypeScript interface from schema
    */
   generateSDKInterface(
@@ -55,16 +85,22 @@ export class InterfaceGenerator {
     if (nonSystemFields.length === 0) {
       // If no properties, add default id field for regular collections
       const keyword = this.options.useTypes ? "type" : "interface";
+      // Determine correct ID type
+      const idType = this.determineIdType(schema, collectionName);
+
       const interfaceStr = `export ${keyword} ${typeName} ${this.options.useTypes ? "= " : ""}{
-  id: string;
+  id: ${idType};
 }\n\n`;
       this.typeTracker.addType(typeName, interfaceStr, ["id"]);
       return;
     }
 
     const keyword = this.options.useTypes ? "type" : "interface";
+    // Determine correct ID type
+    const idType = this.determineIdType(schema, collectionName);
+
     let interfaceStr = `export ${keyword} ${typeName} ${this.options.useTypes ? "= " : ""}{
-  id: string;\n`;
+  id: ${idType};\n`;
     const properties: string[] = [];
 
     // Always add id field first for regular collections

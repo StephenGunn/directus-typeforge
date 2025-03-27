@@ -16,6 +16,31 @@ export class PropertyGenerator {
   }
 
   /**
+   * Determines the appropriate TypeScript type for a property
+   */
+  determineSchemaType(
+    propSchema: OpenAPIV3.SchemaObject | OpenAPIV3.ReferenceObject,
+    defaultType = "string",
+  ): string {
+    if (isReferenceObject(propSchema)) {
+      return defaultType;
+    }
+
+    if (propSchema.type === "integer" || propSchema.type === "number") {
+      return "number";
+    } else if (propSchema.type === "boolean") {
+      return "boolean";
+    } else if (propSchema.type === "array") {
+      // For array types, use string[] as default
+      return "string[]";
+    } else if (propSchema.type === "object") {
+      return "Record<string, unknown>";
+    } else {
+      return (propSchema.type as string) || defaultType;
+    }
+  }
+
+  /**
    * Generates TypeScript definition for a property
    */
   generatePropertyDefinition(
@@ -24,6 +49,16 @@ export class PropertyGenerator {
     isSystemCollection: boolean = false,
     parentCollection?: string,
   ): string {
+    // Special handling for ID fields to ensure correct typing
+    if (propName === "id") {
+      const idType = isReferenceObject(propSchema)
+        ? "string"
+        : propSchema.type === "integer" || propSchema.type === "number"
+          ? "number"
+          : "string";
+      return `  ${propName}: ${idType};\n`;
+    }
+
     // Check for special field types used in Directus
     const specialType = this.checkForSpecialFieldType(propSchema);
     if (specialType) {
@@ -290,6 +325,21 @@ export class PropertyGenerator {
     // Find a $ref in the oneOf array
     const refItem = propSchema.oneOf?.find((item) => "$ref" in item);
 
+    // Also look for primitive types in oneOf to determine basic type (especially important for ID fields)
+    const primitiveType = propSchema.oneOf?.find(
+      (item) =>
+        !isReferenceObject(item) &&
+        (item.type === "integer" || item.type === "number"),
+    );
+
+    // If we find a primitive number type, use that as the base type
+    const baseType =
+      primitiveType &&
+      !isReferenceObject(primitiveType) &&
+      (primitiveType.type === "integer" || primitiveType.type === "number")
+        ? "number"
+        : "string";
+
     if (refItem && "$ref" in refItem && typeof refItem.$ref === "string") {
       // Extract proper type name
       const refMatch = /^#\/components\/schemas\/([^/]+)$/.exec(refItem.$ref);
@@ -302,18 +352,18 @@ export class PropertyGenerator {
             const typeName =
               this.typeNameManager.getSystemCollectionTypeName(collectionName);
 
-            return `  ${propName}?: string | ${typeName};\n`;
+            return `  ${propName}?: ${baseType} | ${typeName};\n`;
           }
 
           // For regular collections, use clean singular names, removing any Items prefix
           let typeName =
             this.typeNameManager.getTypeNameForCollection(collectionName);
           typeName = this.typeNameManager.cleanTypeName(typeName);
-          return `  ${propName}?: string | ${typeName};\n`;
+          return `  ${propName}?: ${baseType} | ${typeName};\n`;
         }
       }
 
-      return `  ${propName}?: string;\n`;
+      return `  ${propName}?: ${baseType};\n`;
     }
 
     return `  ${propName}?: unknown;\n`;
@@ -371,6 +421,21 @@ export class PropertyGenerator {
     if ("oneOf" in propSchema.items && Array.isArray(propSchema.items.oneOf)) {
       const refItem = propSchema.items.oneOf.find((item) => "$ref" in item);
 
+      // Look for primitive types in oneOf to determine base type array
+      const primitiveType = propSchema.items.oneOf?.find(
+        (item) =>
+          !isReferenceObject(item) &&
+          (item.type === "integer" || item.type === "number"),
+      );
+
+      // If we find a primitive number type, use that as the base type
+      const baseType =
+        primitiveType &&
+        !isReferenceObject(primitiveType) &&
+        (primitiveType.type === "integer" || primitiveType.type === "number")
+          ? "number[]"
+          : "string[]";
+
       if (refItem && "$ref" in refItem && typeof refItem.$ref === "string") {
         // Extract proper collection name and type
         const refMatch = /^#\/components\/schemas\/([^/]+)$/.exec(refItem.$ref);
@@ -386,19 +451,19 @@ export class PropertyGenerator {
                   collectionName,
                 );
 
-              return `  ${propName}?: string[] | ${typeName}[];\n`;
+              return `  ${propName}?: ${baseType} | ${typeName}[];\n`;
             }
 
             // For regular collections, remove Items prefix if present
             let typeName =
               this.typeNameManager.getTypeNameForCollection(collectionName);
             typeName = this.typeNameManager.cleanTypeName(typeName);
-            return `  ${propName}?: string[] | ${typeName}[];\n`;
+            return `  ${propName}?: ${baseType} | ${typeName}[];\n`;
           }
         }
       }
 
-      return `  ${propName}?: string[];\n`;
+      return `  ${propName}?: ${baseType};\n`;
     }
 
     // Handle simple array types
@@ -420,7 +485,10 @@ export class PropertyGenerator {
     propName: string,
     propSchema: OpenAPIV3.SchemaObject,
   ): string {
-    const baseType = propSchema.type === "integer" ? "number" : propSchema.type;
+    const baseType =
+      propSchema.type === "integer" || propSchema.type === "number"
+        ? "number"
+        : propSchema.type;
     const optional = "nullable" in propSchema && propSchema.nullable === true;
 
     // Handle special string formats
