@@ -71,12 +71,17 @@ export class PropertyGenerator {
       return `  ${propName}${this.makeRequired ? "" : "?"}: ${specialType};\n`;
     }
 
-    // Special handling for user references that commonly cause recursion
-    if (
+    // First check if this field is a reference to directus_users
+    // by analyzing foreign key relations in the schema
+    const isUserReference = 
       propName === "user_created" ||
       propName === "user_updated" ||
-      propName === "user"
-    ) {
+      propName === "user" ||
+      propName === "author" ||
+      (parentCollection && this.typeNameManager.isKnownRelation(propName, parentCollection) && 
+       this.typeNameManager.getSystemTypeFromReference(propName, parentCollection) === "DirectusUser");
+
+    if (isUserReference) {
       // For these fields, always use string | DirectusUser
       if (this.useTypeReferences && !isSystemCollection) {
         return `  ${propName}${this.makeRequired ? "" : "?"}: string | DirectusUser;\n`;
@@ -211,6 +216,19 @@ export class PropertyGenerator {
     }
 
     return false;
+  }
+  
+  /**
+   * Check if a field is a Many-to-Any relationship field
+   * M2A fields use 'item' field paired with 'collection' field to indicate relation to multiple collection types
+   */
+  private isM2AField(
+    propName: string,
+    parentCollection?: string,
+  ): boolean {
+    // In m2a junction tables, 'item' field contains the referenced item ID
+    // and 'collection' field indicates which collection the item belongs to
+    return propName === "item" && parentCollection !== undefined && parentCollection.includes("_related_");
   }
 
   /**
@@ -384,6 +402,17 @@ export class PropertyGenerator {
     isSystemCollection: boolean = false,
     parentCollection?: string,
   ): string {
+    // Check if this is a M2A field - these should not be arrays but string | any
+    if (this.isM2AField(propName, parentCollection)) {
+      // In M2A relationships, "item" field references an ID that could be from any collection
+      return `  ${propName}${this.makeRequired ? "" : "?"}: string | any;\n`;
+    }
+    
+    // Special handling for "collection" field in M2A relationships
+    if (propName === "collection" && parentCollection !== undefined && parentCollection.includes("_related_")) {
+      return `  ${propName}${this.makeRequired ? "" : "?"}: string | DirectusCollection;\n`;
+    }
+    
     // First check for system type references in junction tables
     const systemType = this.typeNameManager.getSystemTypeFromReference(
       propName,

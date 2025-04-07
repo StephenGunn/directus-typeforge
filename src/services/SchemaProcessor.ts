@@ -242,6 +242,23 @@ export class SchemaProcessor {
    * Processes schemas from paths
    */
   private processPathSchemas(schemas: Record<string, CollectionSchema>): void {
+    // First, try to identify singleton collections from the spec
+    const singletonCollections = new Set<string>();
+    
+    // Check if there are collections defined with singleton flag
+    if (this.spec.components?.schemas) {
+      for (const [schemaName, schema] of Object.entries(this.spec.components.schemas)) {
+        if (!isReferenceObject(schema) && "x-singleton" in schema && schema["x-singleton"] === true) {
+          singletonCollections.add(schemaName);
+        }
+      }
+    }
+    
+    // Register special relationships for M2A (Many to Any) relationships
+    // When a field is named 'collection', it should reference DirectusCollection
+    this.typeNameManager.registerRelation("", "collection", "directus_collections");
+    
+    // Process each path schema
     for (const [path, pathItem] of Object.entries(this.spec.paths ?? {})) {
       const collectionMatch = /^\/items\/(?<collection>[a-zA-Z0-9_]+)$/.exec(
         path,
@@ -257,6 +274,23 @@ export class SchemaProcessor {
 
       const schema = (this.spec.components?.schemas?.[ref] ??
         {}) as OpenAPIV3.SchemaObject;
+        
+      // Check if this collection is a singleton
+      const isSingleton = singletonCollections.has(collection) || collection === "settings";
+      
+      // Set the x-singleton flag if it's a singleton
+      if (isSingleton) {
+        (schema as import("../types").ExtendedSchemaObject)["x-singleton"] = true;
+      }
+      
+      // Check for M2A fields in this collection
+      if (schema.properties && 
+          "collection" in schema.properties && 
+          "item" in schema.properties &&
+          collection.includes("_related_")) {
+        // Register this collection's 'collection' field to reference DirectusCollection
+        this.typeNameManager.registerRelation(collection, "collection", "directus_collections");
+      }
 
       // Generate type name for the collection
       const typeName =

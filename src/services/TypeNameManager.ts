@@ -9,6 +9,7 @@ export class TypeNameManager {
   private processedTypes: Set<string> = new Set();
   private knownCollections: Set<string> = new Set();
   private knownRelations: Map<string, Set<string>> = new Map();
+  private specialRelations: Map<string, string> = new Map();
 
   constructor() {
     this.initializeSystemCollectionMap();
@@ -54,12 +55,25 @@ export class TypeNameManager {
 
   /**
    * Register a relation field for a collection
+   * Optional targetCollection can be provided to indicate what collection the field relates to
    */
-  registerRelation(collectionName: string, fieldName: string): void {
+  registerRelation(
+    collectionName: string, 
+    fieldName: string, 
+    targetCollection?: string
+  ): void {
     if (!this.knownRelations.has(collectionName)) {
       this.knownRelations.set(collectionName, new Set());
     }
     this.knownRelations.get(collectionName)?.add(fieldName);
+    
+    // If we know what this field targets, add a special mapping
+    if (targetCollection) {
+      // Use an empty string key for global field relationships (like 'collection' always refers to DirectusCollection)
+      const lookupCollection = collectionName || "";
+      const relationKey = `${lookupCollection}:${fieldName}`;
+      this.specialRelations.set(relationKey, targetCollection);
+    }
   }
 
   /**
@@ -223,6 +237,23 @@ export class TypeNameManager {
     fieldName: string,
     collectionHint?: string,
   ): string | null {
+    // First check special relation mappings - these take precedence
+    const lookupKey = `${collectionHint || ""}:${fieldName}`;
+    if (this.specialRelations.has(lookupKey)) {
+      const targetCollection = this.specialRelations.get(lookupKey);
+      if (targetCollection) {
+        // Convert target collection to type name
+        if (targetCollection.startsWith("directus_")) {
+          return this.getSystemCollectionTypeName(targetCollection);
+        }
+      }
+    }
+    
+    // Special case for 'collection' field in M2A relationships
+    if (fieldName === "collection") {
+      return "DirectusCollection";
+    }
+    
     // Common patterns for directus_users references in junction tables
     if (
       fieldName === "directus_users_id" ||

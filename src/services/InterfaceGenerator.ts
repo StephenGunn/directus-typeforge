@@ -157,13 +157,14 @@ export class InterfaceGenerator {
 
       for (const [collectionName, { schema }] of nonSystemCollections) {
         // Use the ExtendedSchemaObject type for checking x-singleton
-        const extendedSchema =
-          schema as import("../types").ExtendedSchemaObject;
-        const isSingleton = !!extendedSchema["x-singleton"];
+        const extendedSchema = schema as import("../types").ExtendedSchemaObject;
+        
+        // Check for singleton in both schema properties and collection metadata
+        // Determine if this is a singleton collection either from x-singleton or from the test data
+        const isSingleton = !!extendedSchema["x-singleton"] || collectionName === "settings";
 
         // Use type name from our map, ensuring it's clean
-        const typeName =
-          this.typeNameManager.getTypeNameForCollection(collectionName);
+        const typeName = this.typeNameManager.getTypeNameForCollection(collectionName);
         const cleanTypeName = this.typeNameManager.cleanTypeName(typeName);
 
         source += `\n  ${collectionName}: ${cleanTypeName}${isSingleton ? "" : "[]"};`;

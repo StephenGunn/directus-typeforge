@@ -6,4 +6,5 @@ build/*
 scripts/
 results/
 dev_archive/
-
+test-schema/
+CLAUDE.md
