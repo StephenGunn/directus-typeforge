@@ -270,6 +270,19 @@ export class SchemaProcessor {
       // Skip the id field as we already added it
       if (field.field === "id") continue;
       
+      // Skip UI presentation components and internal fields that aren't relevant for API usage
+      const isUIComponent = 
+        // Fields with type "alias" and special includes "no-data"
+        (field.type === "alias" && field.meta.special && field.meta.special.includes("no-data")) ||
+        // Fields with presentation or group interfaces
+        (field.meta.interface && 
+         (field.meta.interface.startsWith("presentation-") || 
+          field.meta.interface.startsWith("group-")));
+      
+      if (isUIComponent) {
+        continue;
+      }
+      
       // For junction tables, we want to include all fields, even if hidden
       const shouldSkipHidden = 
         field.meta.hidden && 
