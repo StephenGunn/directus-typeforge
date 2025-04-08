@@ -316,10 +316,7 @@ export class SchemaProcessor {
    * in system collections when includeSystemFields=false.
    * 
    * This method works together with getCustomFieldsForCollection to ensure all
-   * custom fields are included in system collections:
-   * 1. getCustomFieldsForCollection finds fields from the schema
-   * 2. enhanceWithRelationFields adds any fields not found but referenced in relations
-   * 3. enhanceWithRelationFields adds special case handling for known field names
+   * custom fields are included in system collections by analyzing relations data.
    */
   private enhanceWithRelationFields(baseFields: DirectusField[], collectionName: string): DirectusField[] {
     // For system collections, check for missing fields that are defined in relations
@@ -327,112 +324,7 @@ export class SchemaProcessor {
       const existingFieldNames = new Set(baseFields.map(f => f.field));
       const syntheticFields: DirectusField[] = [];
       
-      // Special handling for directus_users collection
-      if (collectionName === "directus_users") {
-        // Check for common custom fields in directus_users
-        const fieldsToLookFor = [
-          "stripe_customer_id", 
-          "verification_token", 
-          "verification_url", 
-          "as_staff"
-        ];
-        
-        // Look for relations that define as_staff
-        let asStaffTable = "";
-        let asStaffJunctionField = null;
-        
-        const asStaffRelation = this.snapshot.data.relations?.find(rel => 
-          rel.related_collection === "directus_users" && 
-          rel.meta?.one_field === "as_staff"
-        );
-        
-        if (asStaffRelation) {
-          asStaffTable = asStaffRelation.collection;
-          asStaffJunctionField = asStaffRelation.meta.junction_field;
-        }
-        
-        // Add any missing fields
-        for (const fieldName of fieldsToLookFor) {
-          if (!existingFieldNames.has(fieldName)) {
-            // First, check if the field exists in the snapshot fields data
-            const fieldFromSnapshot = this.snapshot.data.fields?.find(
-              f => f.collection === collectionName && f.field === fieldName
-            );
-            
-            if (fieldFromSnapshot) {
-              // Use the field definition from the snapshot
-              syntheticFields.push(fieldFromSnapshot);
-            } else {
-              // For as_staff relationship field
-              if (fieldName === "as_staff" && asStaffTable) {
-                syntheticFields.push({
-                  collection: collectionName,
-                  field: fieldName,
-                  type: "alias",
-                  meta: {
-                    collection: collectionName,
-                    field: fieldName,
-                    hidden: false,
-                    interface: "list-m2m",
-                    special: ["m2m"],
-                    system: false,
-                    junction_collection: asStaffTable,
-                    junction_field: asStaffJunctionField
-                  },
-                  schema: {
-                    name: fieldName,
-                    table: collectionName,
-                    data_type: "alias",
-                    default_value: null,
-                    max_length: null,
-                    numeric_precision: null,
-                    numeric_scale: null,
-                    is_nullable: true,
-                    is_unique: false,
-                    is_primary_key: false,
-                    has_auto_increment: false,
-                    foreign_key_table: null,
-                    foreign_key_column: null
-                  }
-                });
-              } 
-              // For string fields
-              else if (fieldName !== "as_staff") {
-                syntheticFields.push({
-                  collection: collectionName,
-                  field: fieldName,
-                  type: "string",
-                  meta: {
-                    collection: collectionName,
-                    field: fieldName,
-                    hidden: false,
-                    interface: "input",
-                    special: [],
-                    system: false
-                  },
-                  schema: {
-                    name: fieldName,
-                    table: collectionName,
-                    data_type: "varchar",
-                    default_value: null,
-                    max_length: 255,
-                    numeric_precision: null,
-                    numeric_scale: null,
-                    is_nullable: true,
-                    is_unique: false,
-                    is_primary_key: false,
-                    has_auto_increment: false,
-                    foreign_key_table: null,
-                    foreign_key_column: null
-                  }
-                });
-              }
-            }
-          }
-        }
-      }
-      
-      // For all system collections, look for any m2m relationships in relations
+      // Analyze schema relations to find fields for this system collection
       if (this.snapshot.data.relations) {
         for (const relation of this.snapshot.data.relations) {
           // Look for relations where this collection is the related_collection
@@ -472,6 +364,48 @@ export class SchemaProcessor {
                 foreign_key_column: null
               }
             });
+            
+            existingFieldNames.add(relation.meta.one_field);
+          }
+          
+          // Check for many-to-one or one-to-one relations targeting this collection
+          if (relation.collection === collectionName && 
+              relation.related_collection &&
+              !relation.meta.one_field && // Not a one-to-many or many-to-many
+              !relation.meta.junction_field && // Not a junction
+              !existingFieldNames.has(relation.field)) {
+            
+            // Create a synthetic field for this relationship
+            syntheticFields.push({
+              collection: collectionName,
+              field: relation.field,
+              type: "alias",
+              meta: {
+                collection: collectionName,
+                field: relation.field,
+                hidden: false,
+                interface: "many-to-one",
+                special: ["m2o"],
+                system: false
+              },
+              schema: {
+                name: relation.field,
+                table: collectionName,
+                data_type: "alias",
+                default_value: null,
+                max_length: null,
+                numeric_precision: null,
+                numeric_scale: null,
+                is_nullable: true,
+                is_unique: false,
+                is_primary_key: false,
+                has_auto_increment: false,
+                foreign_key_table: relation.related_collection,
+                foreign_key_column: "id"
+              }
+            });
+            
+            existingFieldNames.add(relation.field);
           }
         }
       }
@@ -1234,7 +1168,6 @@ export class SchemaProcessor {
    * 1. Is explicitly marked as not a system field (meta.system === false)
    * 2. Is not in the SYSTEM_FIELDS constant
    * 3. Has special attributes that indicate it's a relationship
-   * 4. Has a standard field name expected in custom fields (like stripe_customer_id)
    * 
    * For regular collections, we return all fields.
    */
@@ -1265,16 +1198,10 @@ export class SchemaProcessor {
       field => field.collection === collectionName
     ) || [];
     
-    // Common custom fields that should always be included if present
-    const knownCustomFields = new Set(["stripe_customer_id", "verification_token", "verification_url", "as_staff"]);
-    
     // Step 3: Filter to find custom fields using multiple criteria
     const customFields = allFields.filter(field => {
       // Skip id field - we'll always add it
       if (field.field === 'id') return false;
-      
-      // Include if field is a known custom field
-      if (knownCustomFields.has(field.field)) return true;
       
       // Include if field is explicitly marked as not a system field
       if (field.meta.system === false) return true;
