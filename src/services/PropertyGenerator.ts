@@ -48,6 +48,17 @@ export class PropertyGenerator {
           field.meta.special.includes("timestamp")) {
         return "string"; // or 'datetime' for Directus SDK
       }
+      
+      // Handle M2M and O2M relationship alias fields
+      // These fields don't have no-data in their special array
+      if (field.type === "alias" && 
+          (field.meta.special.includes("m2m") || 
+           field.meta.special.includes("o2m") || 
+           field.meta.special.includes("m2a"))) {
+        // These are handled by the relationship tracking system
+        // and will be properly typed when generating properties
+        return "any"; // This won't be used directly, but provides a fallback
+      }
     }
     
     // Map Directus types to TypeScript types
@@ -74,6 +85,10 @@ export class PropertyGenerator {
       case "time":
       case "timestamp":
         return "string"; // or 'datetime' for Directus SDK
+      case "alias":
+        // Any remaining alias fields not filtered out before this point
+        // and not handled by special cases above
+        return "any";
       default:
         // Default to string for unknown types
         return "string";
