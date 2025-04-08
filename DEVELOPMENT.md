@@ -1,122 +1,217 @@
-# Directus TypeForge
+# Directus TypeForge Development Guide
 
 A TypeScript type definition generator for Directus schemas. This tool processes
-Directus OpenAPI specifications and generates corresponding TypeScript type
-definitions.
+Directus schema snapshots and generates corresponding TypeScript type definitions
+optimized for use with the Directus SDK.
 
 ## Project Structure
 
 ```
 src/
 ├── constants/
-│   └── system_fields.ts      # Directus system field definitions
+│   └── system_fields.ts             # Directus system field definitions
+├── generators/
+│   └── typescript.ts                # TypeScript code generation helpers
 ├── services/
-│   ├── SchemaProcessor.ts    # Processes OpenAPI schemas into TypeScript types
-│   ├── SpecReader.ts         # Handles reading and fetching OpenAPI specs
-│   └── TypeTracker.ts        # Manages type definitions during generation
+│   ├── InterfaceGenerator.ts        # Generates interfaces for collections
+│   ├── PropertyGenerator.ts         # Generates property types for fields
+│   ├── RelationshipTracker.ts       # Tracks relationships between collections
+│   ├── SchemaProcessor.ts           # Processes schema data into TypeScript types
+│   ├── SchemaReader.ts              # Handles reading schema snapshots
+│   ├── SchemaSnapshotProcessor.ts   # Processes Directus schema snapshots
+│   ├── SystemCollectionManager.ts   # Manages system collection types
+│   ├── TypeNameManager.ts           # Manages type naming and conversions
+│   └── TypeTracker.ts               # Tracks type definitions during generation
 ├── types/
-│   └── index.ts             # Central type definitions
+│   └── index.ts                     # Central type definitions
 ├── utils/
-│   ├── schema.ts            # Schema-related utility functions
-│   └── string.ts            # String manipulation utilities
-└── index.ts                 # Main entry point
+│   ├── schema.ts                    # Schema-related utility functions
+│   └── string.ts                    # String manipulation utilities
+└── index.ts                         # Main entry point
 ```
 
 ## How It Works
 
 ### Core Flow
 
-1. **Spec Reading** (`SpecReader.ts`)
+1. **Schema Reading** (`SchemaReader.ts`)
 
-   - Reads OpenAPI spec from either:
-     - Local file using `specFile` option
-     - Directus API using host, email, and password
+   - Reads schema snapshot from either:
+     - Local file using `snapshotFile` option
+     - Directus API using host, email/password, or token
    - Handles authentication when accessing Directus API
+   - Fetches the complete schema snapshot from `/schema/snapshot` endpoint
 
-2. **Schema Processing** (`SchemaProcessor.ts`)
+2. **Schema Processing** (`SchemaProcessor.ts` and `SchemaSnapshotProcessor.ts`)
 
-   - Takes OpenAPI spec and processes it into TypeScript types
+   - Takes schema snapshot data and processes it into TypeScript types
    - Main processing steps:
-     - Collects schemas from paths and system collections
-     - Generates SDK interfaces for each schema
-     - Handles property type conversion and relationships
+     - Registers collections and determines their ID types
+     - Analyzes relationships between collections (M2O, O2M, M2M, M2A)
+     - Generates interfaces for each collection
+     - Handles property type conversion and special field types
+     - Handles system collections and includes them when needed
 
-3. **Type Management** (`TypeTracker.ts`)
+3. **Type Management** (`TypeTracker.ts` and `TypeNameManager.ts`)
    - Tracks and manages type definitions during generation
-   - Handles special cases for Directus types
-   - Ensures proper type content and validity
+   - Handles naming conventions for types
+   - Ensures proper type content and relationships
 
 ### Key Components
+
+#### Relationship Tracking (`RelationshipTracker.ts`)
+
+- Tracks relationships between collections
+- Categorizes relationships by type (M2O, O2M, M2M, M2A)
+- Helps generate appropriate TypeScript types for relationships
+
+#### Type Name Management (`TypeNameManager.ts`)
+
+- Manages naming conventions for collections and types
+- Converts collection names to appropriate TypeScript interface names
+- Handles singular/plural conversions (e.g., "events" → "Event")
+- Preserves singleton collection names (e.g., "settings" → "Settings")
+- Maintains type name consistency throughout the codebase
+
+#### System Collection Management (`SystemCollectionManager.ts`)
+
+- Handles Directus system collections
+- Generates interfaces for system collections when referenced
+- Maintains system field information for each system collection
+- Provides minimal interfaces when `includeSystemFields` is false
+
+#### Interface Generation (`InterfaceGenerator.ts`)
+
+- Generates TypeScript interfaces for collections
+- Handles field types and relationships
+- Manages special cases like junction tables and many-to-any relationships
 
 #### Type Definitions (`types/index.ts`)
 
 - Contains all shared type definitions
 - Includes configuration options types
-- Defines schema extension types
-
-#### Utility Functions
-
-- **Schema Utils** (`utils/schema.ts`):
-  - Type guards for schema objects
-  - Reference extraction utilities
-  - System collection detection
-- **String Utils** (`utils/string.ts`):
-  - Case conversion utilities
+- Defines schema snapshot types
 
 ## Usage
 
 ```typescript
-import { readSpecFile, generateTypeScript } from "directus-typeforge";
+import { readSchema, generateTypeScript } from "directus-typeforge";
 
-// Read spec from file
-const spec = await readSpecFile({
-  specFile: "./directus-spec.json",
+// Read schema from snapshot file
+const schema = await readSchema({
+  snapshotFile: "./schema-snapshot.json",
 });
 
 // Or read from Directus API
-const spec = await readSpecFile({
+const schema = await readSchema({
   host: "https://your-directus-instance.com",
   email: "your-email",
   password: "your-password",
 });
 
+// Or using a static token
+const schema = await readSchema({
+  host: "https://your-directus-instance.com",
+  token: "your-static-token",
+});
+
 // Generate TypeScript types
-const types = await generateTypeScript(spec, {
-  typeName: "DirectusCollections",
+const types = generateTypeScript(schema, {
+  typeName: "ApiCollections",
+  useTypeReferences: true,
+  makeRequired: true,
+  includeSystemFields: true,
+  addTypedocNotes: true,
 });
 ```
 
 ## Type Generation Process
 
-1. **Collection Schema Collection**
+1. **Collection Registration**
 
-   - Processes API paths to find collections
-   - Identifies system collections
-   - Extracts schema references
+   - Processes schema snapshot to identify collections
+   - Determines ID types for each collection (string or number)
+   - Maps collection names to type names
+   - Identifies singleton collections (those with `meta.singleton: true`)
+   - Applies different naming conventions for singletons vs. regular collections
 
-2. **Interface Generation**
+2. **Relationship Analysis**
 
-   - Generates TypeScript interfaces for each schema
-   - Handles different property types:
-     - Basic types (string, number, etc.)
-     - Arrays
-     - References to other collections
-     - OneOf relationships
+   - Identifies relationships between collections
+   - Categorizes as many-to-one, one-to-many, many-to-many, or many-to-any
+   - Tracks both sides of each relationship
 
-3. **Type Refinement**
-   - Removes system fields when appropriate
-   - Handles special Directus type cases
-   - Manages relationship references
+3. **Interface Generation**
+
+   - Generates TypeScript interfaces/types for each collection
+   - Handles different field types
+   - Properly types relationship fields
+   - Special handling for junction tables and many-to-any relationships
+
+4. **System Collection Handling**
+
+   - Generates appropriate interfaces for referenced system collections
+   - Includes full system fields when `includeSystemFields` is true
+   - Provides minimal interfaces (ID only) when `includeSystemFields` is false
+
+5. **Root Type Generation**
+   - Generates the root `ApiCollections` type that includes all collections
+   - Correctly handles singleton vs. regular collections (array vs. single object)
+   - Includes system collections when appropriate
 
 ## Development Notes
 
-- Uses temporary files for large spec processing
-- Handles cleanup automatically
-- Some type assertions are used with TODO markers for future improvement
-- System fields are defined separately for maintainability
+- System field definitions are maintained in `constants/system_fields.ts`
+- TypeScript formatting is consistent for clean, readable output
+- Junction tables (M2M and M2A) get special handling to include all relevant fields
+- Relationship types follow the Directus SDK conventions
 
-## Known Issues
+### Type Naming Conventions
 
-- Diretus does not provide an identifier for system fields, so they are
-  hardcoded
-- JSON repeaters are not yet supported and return an unknown type
+- Regular collections are converted from plural to singular form and to PascalCase
+  - Example: `blog_posts` → `BlogPost`
+  - Handles common plural endings (e.g., "ies" → "y", "s" → "")
+  - Skips singular-looking words ending with "s" (e.g., "analysis", "status")
+- Singleton collections preserve their original form (converted to PascalCase)
+  - Example: `settings` → `Settings` (not singularized to `Setting`)
+  - Example: `globals` → `Globals` (not singularized to `Global`)
+  - This maintains the semantic meaning of singleton collections
+- System collections follow a `Directus{EntityName}` naming pattern
+  - Example: `directus_users` → `DirectusUser`
+
+## Implementation Details
+
+### System Collections and Fields
+
+System collections are handled in two ways:
+
+1. With `includeSystemFields=false` (default for SDK usage):
+   - Only generates minimal interfaces for system collections that are referenced in relationships
+   - Each system type contains just an ID field
+   - Minimizes potential compatibility issues across Directus versions
+
+2. With `includeSystemFields=true`:
+   - Generates complete interfaces for system collections with all fields
+   - Includes all system fields for the collection
+   - Provides more detailed types for working with system collections
+
+System fields are identified through two mechanisms:
+
+1. Dynamic identification using the Directus API:
+   - The `SystemFieldDetector` class processes field data from the `/fields` endpoint
+   - Fields are identified as system fields based on their `meta.system` property
+   - This provides accurate system field identification for any Directus installation
+
+2. Fallback mechanism using predefined fields:
+   - When fields data is not available, the system uses the `SYSTEM_FIELDS` constant
+   - This constant can be updated using the `update-system-fields.ts` script
+   - The script fetches system fields from a Directus instance and generates an updated constant
+
+### Relationship Handling
+
+The tool handles all Directus relationship types:
+
+- **Many-to-One (M2O)**: `field: string | RelatedType;`
+- **One-to-Many (O2M)**: `field: string[] | RelatedType[];`
+- **Many-to-Many (M2M)**: Properly handles junction collections with both foreign keys
+- **Many-to-Any (M2A)**: Handles special junction tables with `item` and `collection` fields

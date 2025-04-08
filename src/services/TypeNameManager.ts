@@ -10,6 +10,7 @@ export class TypeNameManager {
   private knownCollections: Set<string> = new Set();
   private knownRelations: Map<string, Set<string>> = new Map();
   private specialRelations: Map<string, string> = new Map();
+  private singletonCollections: Set<string> = new Set();
 
   constructor() {
     this.initializeSystemCollectionMap();
@@ -51,6 +52,24 @@ export class TypeNameManager {
    */
   registerCollection(collectionName: string): void {
     this.knownCollections.add(collectionName);
+    // Also register lowercase version for case-insensitive matching
+    this.knownCollections.add(collectionName.toLowerCase());
+  }
+  
+  /**
+   * Register a collection as a singleton
+   */
+  registerSingleton(collectionName: string): void {
+    this.singletonCollections.add(collectionName);
+    this.singletonCollections.add(collectionName.toLowerCase());
+  }
+  
+  /**
+   * Check if a collection is a singleton
+   */
+  isSingleton(collectionName: string): boolean {
+    return this.singletonCollections.has(collectionName) || 
+           this.singletonCollections.has(collectionName.toLowerCase());
   }
 
   /**
@@ -87,7 +106,7 @@ export class TypeNameManager {
    * Check if a name is a known collection
    */
   isCollectionName(name: string): boolean {
-    return this.knownCollections.has(name);
+    return this.knownCollections.has(name) || this.knownCollections.has(name.toLowerCase());
   }
 
   /**
@@ -102,9 +121,15 @@ export class TypeNameManager {
   }
 
   /**
-   * Convert plural name to singular for type consistency
+   * Convert plural name to singular for type consistency, 
+   * but only if the collection is not a singleton
    */
-  makeSingular(name: string): string {
+  makeSingular(name: string, collectionName?: string): string {
+    // Skip singularization if it's a singleton collection
+    if (collectionName && this.isSingleton(collectionName)) {
+      return name;
+    }
+    
     // Common plural endings
     if (name.endsWith("ies")) {
       return name.slice(0, -3) + "y";
@@ -140,21 +165,24 @@ export class TypeNameManager {
       }
       // If not found in map, use PascalCase and make singular
       const plural = toPascalCase(collectionNameOrRef);
-      return this.makeSingular(plural);
+      return this.makeSingular(plural, collectionNameOrRef);
     }
 
     // Not a system collection - generate appropriate name
     const pascalName = toPascalCase(collectionNameOrRef);
-    return this.makeSingular(pascalName);
+    return this.makeSingular(pascalName, collectionNameOrRef);
   }
 
   /**
    * Check if a collection name represents a system collection
    */
   isSystemCollection(collectionName: string): boolean {
+    const lowerCollectionName = collectionName.toLowerCase();
     return (
       collectionName.startsWith("directus_") ||
-      this.systemCollectionMap.has(collectionName)
+      lowerCollectionName.startsWith("directus_") ||
+      this.systemCollectionMap.has(collectionName) ||
+      this.systemCollectionMap.has(lowerCollectionName)
     );
   }
 
@@ -165,20 +193,30 @@ export class TypeNameManager {
     // Register as a known collection
     this.registerCollection(collectionName);
 
-    // First check if we already have this collection mapped
+    // First check if we already have this collection mapped (case sensitive)
     if (this.collectionTypeMap.has(collectionName)) {
       return this.collectionTypeMap.get(collectionName)!;
     }
+    
+    // Also check case insensitive
+    const lowerCollectionName = collectionName.toLowerCase();
+    for (const [key, value] of this.collectionTypeMap.entries()) {
+      if (key.toLowerCase() === lowerCollectionName) {
+        // Store the mapping for the original case for future lookups
+        this.collectionTypeMap.set(collectionName, value);
+        return value;
+      }
+    }
 
     // For system collections, use the system naming convention
-    if (collectionName.startsWith("directus_")) {
+    if (collectionName.startsWith("directus_") || lowerCollectionName.startsWith("directus_")) {
       const typeName = this.getSystemCollectionTypeName(collectionName);
       this.collectionTypeMap.set(collectionName, typeName);
       return typeName;
     }
 
-    // For regular collections, just use the singular form in PascalCase without any prefix
-    const typeName = toPascalCase(this.makeSingular(collectionName));
+    // For regular collections, apply singularization conditionally
+    const typeName = toPascalCase(this.makeSingular(collectionName, collectionName));
     this.collectionTypeMap.set(collectionName, typeName);
     return typeName;
   }
@@ -226,7 +264,8 @@ export class TypeNameManager {
       "directus_operations",
     ];
 
-    return numberIdCollections.includes(collection) ? "number" : "string";
+    // Case insensitive check
+    return numberIdCollections.some(c => c.toLowerCase() === collection.toLowerCase()) ? "number" : "string";
   }
 
   /**
@@ -237,7 +276,7 @@ export class TypeNameManager {
     fieldName: string,
     collectionHint?: string,
   ): string | null {
-    // First check special relation mappings - these take precedence
+    // First check special relation mappings
     const lookupKey = `${collectionHint || ""}:${fieldName}`;
     if (this.specialRelations.has(lookupKey)) {
       const targetCollection = this.specialRelations.get(lookupKey);
@@ -246,6 +285,7 @@ export class TypeNameManager {
         if (targetCollection.startsWith("directus_")) {
           return this.getSystemCollectionTypeName(targetCollection);
         }
+        return this.getTypeNameForCollection(targetCollection);
       }
     }
     
@@ -254,14 +294,31 @@ export class TypeNameManager {
       return "DirectusCollection";
     }
     
-    // Common patterns for directus_users references in junction tables
+    // Handle common Directus user reference field patterns
     if (
       fieldName === "directus_users_id" ||
-      fieldName === "user_id" ||
+      fieldName === "user_id" || 
+      fieldName === "user_created" ||
+      fieldName === "user_updated" ||
       fieldName === "user" ||
-      (collectionHint && collectionHint.includes("directus_users"))
+      fieldName === "owner" ||
+      fieldName === "created_by" ||
+      fieldName === "updated_by" ||
+      fieldName === "author"
     ) {
       return "DirectusUser";
+    }
+
+    // Handle common Directus file reference field patterns
+    if (
+      fieldName === "directus_files_id" ||
+      fieldName === "file_id" ||
+      fieldName === "file" ||
+      fieldName === "image" ||
+      fieldName === "thumbnail" ||
+      fieldName === "avatar"
+    ) {
+      return "DirectusFile";
     }
 
     // Check for other common system collection references
@@ -270,10 +327,17 @@ export class TypeNameManager {
       if (
         fieldName === `${fullName}_id` ||
         fieldName === `${shortName}_id` ||
-        fieldName === shortName ||
-        (collectionHint && collectionHint.includes(fullName))
+        fieldName === shortName
       ) {
         return typeName;
+      }
+    }
+
+    // Look for matched foreignKey patterns with field_id naming
+    if (fieldName.endsWith('_id') && fieldName !== 'id') {
+      const baseCollection = fieldName.substring(0, fieldName.length - 3);
+      if (this.isCollectionName(baseCollection)) {
+        return this.getTypeNameForCollection(baseCollection);
       }
     }
 

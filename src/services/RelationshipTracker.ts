@@ -1,21 +1,10 @@
-import type { OpenAPIV3_1 as OpenAPIV3 } from "openapi-types";
-import type { ExtendedSchemaObject } from "../types";
-import { isReferenceObject } from "../utils/schema";
+import { RelationshipInfo, RelationshipType, DirectusRelation } from "../types";
+
+// Re-export RelationshipType for convenience
+export { RelationshipType } from "../types";
 
 /**
- * Relationship information structure
- */
-export interface RelationshipInfo {
-  sourceCollection: string;
-  sourceField: string;
-  targetCollection: string;
-  isJunctionTable?: boolean;
-  isM2M?: boolean;
-  isO2M?: boolean;
-}
-
-/**
- * Tracks relationships between collections for accurate type generation
+ * Tracks relationships between Directus collections for accurate type generation
  */
 export class RelationshipTracker {
   // Store all relationships between collections
@@ -58,10 +47,10 @@ export class RelationshipTracker {
     idType: "string" | "number" = "string",
   ): void {
     this.collectionIdTypes.set(collectionName, idType);
-
-    // If this is a system collection with a prefix, also register the shorthand
-    if (collectionName.startsWith("directus_")) {
-      const shortName = collectionName.replace("directus_", "");
+    
+    // For system collections, also register the short name
+    if (collectionName.toLowerCase().startsWith("directus_")) {
+      const shortName = collectionName.replace(/^directus_/i, "");
       if (!this.collectionIdTypes.has(shortName)) {
         this.collectionIdTypes.set(shortName, idType);
       }
@@ -75,215 +64,62 @@ export class RelationshipTracker {
     sourceCollection: string,
     sourceField: string,
     targetCollection: string,
-    isJunctionTable: boolean = false,
-    isM2M: boolean = false,
-    isO2M: boolean = false,
+    relationshipType: RelationshipType = RelationshipType.ManyToOne,
+    junctionCollection?: string,
+    junctionField?: string
   ): void {
-    // Normalize collection names (remove directus_ prefix if present)
-    const normalizedSource = this.normalizeCollectionName(sourceCollection);
-    const normalizedTarget = this.normalizeCollectionName(targetCollection);
-
     this.relationships.push({
-      sourceCollection: normalizedSource,
+      sourceCollection,
       sourceField,
-      targetCollection: normalizedTarget,
-      isJunctionTable,
-      isM2M,
-      isO2M,
+      targetCollection,
+      relationshipType,
+      junctionCollection,
+      junctionField
     });
   }
 
   /**
-   * Normalize collection name by removing directus_ prefix if present
+   * Process relations from the schema snapshot to identify relationship types
    */
-  private normalizeCollectionName(collectionName: string): string {
-    return collectionName.startsWith("directus_")
-      ? collectionName
-      : collectionName;
-  }
-
-  /**
-   * Analyze an OpenAPI schema to extract and register relationships
-   */
-  analyzeSchema(spec: OpenAPIV3.Document): void {
-    // First register all collections and their ID types
-    if (spec.components?.schemas) {
-      for (const [schemaName, schema] of Object.entries(
-        spec.components.schemas,
-      )) {
-        // Skip reference objects
-        if (isReferenceObject(schema)) continue;
-
-        // Check for ID field to determine the ID type
-        if (schema.properties && "id" in schema.properties) {
-          const idProp = schema.properties.id;
-
-          if (!isReferenceObject(idProp)) {
-            // If ID is integer or number, register as number ID
-            if (idProp.type === "integer" || idProp.type === "number") {
-              this.registerCollection(schemaName, "number");
-            } else {
-              // Otherwise register with string ID
-              this.registerCollection(schemaName, "string");
-            }
-          } else {
-            // Default to string if ID is a reference
-            this.registerCollection(schemaName, "string");
-          }
-        } else {
-          // No ID property found, register with default string ID
-          this.registerCollection(schemaName, "string");
-        }
-
-        // Register system collections with their known ID types
-        if (
-          schemaName.startsWith("directus_") &&
-          this.numberIdCollections.has(schemaName)
-        ) {
-          this.registerCollection(schemaName, "number");
-        }
-
-        // Check for x-collection property
-        const extendedSchema = schema as ExtendedSchemaObject;
-        if (extendedSchema["x-collection"]) {
-          // Also register the x-collection value with the same ID type
-          const idType = this.getCollectionIdType(schemaName);
-          this.registerCollection(extendedSchema["x-collection"], idType);
-        }
-
-        // Analyze schema properties for relationships
-        if (schema.properties) {
-          this.analyzeSchemaProperties(schemaName, schema.properties);
-        }
+  processRelations(relations: DirectusRelation[]): void {
+    for (const relation of relations) {
+      if (!relation.related_collection) continue;
+      
+      // Determine relationship type
+      let relationshipType = RelationshipType.ManyToOne; // Default assumption
+      
+      if (relation.meta.junction_field) {
+        relationshipType = RelationshipType.ManyToMany;
+      } else if (relation.meta.one_collection === relation.collection) {
+        relationshipType = RelationshipType.OneToMany;
+      } else if (relation.field.endsWith('_id') || relation.field === 'id') {
+        relationshipType = RelationshipType.ManyToOne;
       }
-    }
-
-    // Then examine paths for more relationship clues
-    if (spec.paths) {
-      for (const [path, pathItem] of Object.entries(spec.paths)) {
-        if (!pathItem || typeof pathItem !== "object") continue;
-
-        // Check for collection patterns in paths
-        const collectionMatch = /^\/items\/([a-zA-Z0-9_]+)/.exec(path);
-        if (collectionMatch && collectionMatch[1]) {
-          const collectionName = collectionMatch[1];
-
-          // Ensure we have this collection registered
-          if (!this.collectionIdTypes.has(collectionName)) {
-            // Default to string ID unless we know it's a system collection with number ID
-            const idType =
-              collectionName.startsWith("directus_") &&
-              this.numberIdCollections.has(collectionName)
-                ? "number"
-                : "string";
-            this.registerCollection(collectionName, idType);
-          }
-        }
+      
+      // Check for special many-to-any case
+      if (relation.meta.one_collection === null && 
+          relation.field === 'item' && 
+          relation.collection.includes('_related_')) {
+        relationshipType = RelationshipType.ManyToAny;
       }
-    }
-  }
-
-  /**
-   * Analyze schema properties to identify relationships
-   */
-  private analyzeSchemaProperties(
-    collectionName: string,
-    properties: Record<
-      string,
-      OpenAPIV3.SchemaObject | OpenAPIV3.ReferenceObject
-    >,
-  ): void {
-    for (const [propName, propSchema] of Object.entries(properties)) {
-      // Skip id field
-      if (propName === "id") continue;
-
-      // Handle direct references (M2O relationships)
-      if (isReferenceObject(propSchema)) {
-        const refMatch = /^#\/components\/schemas\/(?<ref>[a-zA-Z0-9_]+)$/.exec(
-          propSchema.$ref,
-        );
-        if (refMatch && refMatch[1]) {
-          const targetCollection = refMatch[1];
-          this.registerRelationship(collectionName, propName, targetCollection);
-        }
-      }
-      // Handle array references (O2M or M2M relationships)
-      else if (propSchema.type === "array" && propSchema.items) {
-        if (isReferenceObject(propSchema.items)) {
-          const refMatch =
-            /^#\/components\/schemas\/(?<ref>[a-zA-Z0-9_]+)$/.exec(
-              propSchema.items.$ref,
-            );
-          if (refMatch && refMatch[1]) {
-            const targetCollection = refMatch[1];
-            // Likely a O2M relationship
-            this.registerRelationship(
-              collectionName,
-              propName,
-              targetCollection,
-              false,
-              false,
-              true,
-            );
-          }
-        }
-        // Handle oneOf arrays which might indicate M2M relationships
-        else if (
-          typeof propSchema.items === "object" &&
-          "oneOf" in propSchema.items
-        ) {
-          const oneOfArray = propSchema.items.oneOf;
-          if (Array.isArray(oneOfArray)) {
-            for (const item of oneOfArray) {
-              if (isReferenceObject(item)) {
-                const refMatch =
-                  /^#\/components\/schemas\/(?<ref>[a-zA-Z0-9_]+)$/.exec(
-                    item.$ref,
-                  );
-                if (refMatch && refMatch[1]) {
-                  const targetCollection = refMatch[1];
-                  // This is likely a M2M relationship
-                  this.registerRelationship(
-                    collectionName,
-                    propName,
-                    targetCollection,
-                    false,
-                    true,
-                  );
-                }
-              }
-            }
-          }
-        }
-      }
-      // Handle oneOf references which might also indicate relationships
-      else if ("oneOf" in propSchema && Array.isArray(propSchema.oneOf)) {
-        for (const item of propSchema.oneOf) {
-          if (isReferenceObject(item)) {
-            const refMatch =
-              /^#\/components\/schemas\/(?<ref>[a-zA-Z0-9_]+)$/.exec(item.$ref);
-            if (refMatch && refMatch[1]) {
-              const targetCollection = refMatch[1];
-              this.registerRelationship(
-                collectionName,
-                propName,
-                targetCollection,
-              );
-            }
-          }
-        }
-      }
+      
+      this.registerRelationship(
+        relation.collection,
+        relation.field,
+        relation.related_collection,
+        relationshipType
+      );
     }
   }
 
   /**
    * Determine if a collection is a junction table
-   * Junction tables typically have fields referencing both sides of a M2M relationship
    */
   isJunctionTable(collectionName: string): boolean {
     // Count reference fields in this collection
     const relationships = this.relationships.filter(
-      (r) => r.sourceCollection === collectionName && !r.isM2M && !r.isO2M,
+      (r) => r.sourceCollection === collectionName && 
+             r.relationshipType === RelationshipType.ManyToOne
     );
 
     // A junction table typically has at least 2 reference fields to other collections
@@ -298,12 +134,10 @@ export class RelationshipTracker {
     if (this.collectionIdTypes.has(collectionName)) {
       return this.collectionIdTypes.get(collectionName)!;
     }
-
+    
     // Check if it's a system collection with number ID
-    if (
-      collectionName.startsWith("directus_") &&
-      this.numberIdCollections.has(collectionName)
-    ) {
+    if (collectionName.startsWith("directus_") && 
+        Array.from(this.numberIdCollections).some(col => col === collectionName)) {
       return "number";
     }
 
@@ -312,46 +146,11 @@ export class RelationshipTracker {
   }
 
   /**
-   * Determine the appropriate type for a relationship field
-   */
-  getRelationshipFieldType(collectionName: string, fieldName: string): string {
-    // Find direct relationships where this collection is the target
-    const directRelationships = this.relationships.filter(
-      (r) =>
-        r.targetCollection === collectionName && r.sourceField === fieldName,
-    );
-
-    if (directRelationships.length > 0) {
-      // Use the ID type of the source collection
-      const idType = this.getCollectionIdType(
-        directRelationships[0].sourceCollection,
-      );
-      return `${idType}[]`;
-    }
-
-    // Look for junction table relationships
-    const junctionRelationships = this.relationships.filter(
-      (r) => r.isM2M && r.targetCollection === collectionName,
-    );
-
-    if (junctionRelationships.length > 0) {
-      // For M2M relations, the ID type should be that of the junction table
-      const junctionTable = junctionRelationships[0].sourceCollection;
-      const idType = this.getCollectionIdType(junctionTable);
-      return `${idType}[]`;
-    }
-
-    // If we can't determine the relationship precisely, default to string[]
-    // This is the safest default as most Directus collections use string UUIDs
-    return "string[]";
-  }
-
-  /**
    * Get all relationships where a collection is the source
    */
   getRelationshipsFromCollection(collectionName: string): RelationshipInfo[] {
     return this.relationships.filter(
-      (r) => r.sourceCollection === collectionName,
+      (r) => r.sourceCollection === collectionName
     );
   }
 
@@ -360,29 +159,25 @@ export class RelationshipTracker {
    */
   getRelationshipsToCollection(collectionName: string): RelationshipInfo[] {
     return this.relationships.filter(
-      (r) => r.targetCollection === collectionName,
+      (r) => r.targetCollection === collectionName
     );
   }
-
+  
   /**
-   * Debug method to print all tracked relationships
+   * Get a relationship for a specific collection and field
    */
-  debugPrintRelationships(): void {
-    console.log("Tracked Relationships:");
-    for (const rel of this.relationships) {
-      console.log(
-        `${rel.sourceCollection}.${rel.sourceField} -> ${rel.targetCollection} ${rel.isM2M ? "(M2M)" : rel.isO2M ? "(O2M)" : ""}`,
-      );
-    }
+  getRelationship(collectionName: string, fieldName: string): RelationshipInfo | undefined {
+    return this.relationships.find(
+      (r) => r.sourceCollection === collectionName && r.sourceField === fieldName
+    );
   }
-
+  
   /**
-   * Debug method to print all tracked ID types
+   * Check if a relationship exists for a specific collection and field
    */
-  debugPrintIdTypes(): void {
-    console.log("Collection ID Types:");
-    this.collectionIdTypes.forEach((type, collection) => {
-      console.log(`${collection}: ${type}`);
-    });
+  hasRelationship(collectionName: string, fieldName: string): boolean {
+    return this.relationships.some(
+      (r) => r.sourceCollection === collectionName && r.sourceField === fieldName
+    );
   }
 }

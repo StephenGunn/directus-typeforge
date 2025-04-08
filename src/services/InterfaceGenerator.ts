@@ -1,9 +1,8 @@
-import type { OpenAPIV3_1 as OpenAPIV3 } from "openapi-types";
 import { TypeTracker } from "./TypeTracker";
 import { PropertyGenerator } from "./PropertyGenerator";
 import { TypeNameManager } from "./TypeNameManager";
 import { SystemCollectionManager } from "./SystemCollectionManager";
-import { isReferenceObject } from "../utils/schema";
+import type { DirectusCollection, DirectusField } from "../types";
 
 /**
  * Generates TypeScript interfaces for collections
@@ -36,109 +35,57 @@ export class InterfaceGenerator {
   }
 
   /**
-   * Determines the correct ID type from schema properties
+   * Generates TypeScript interface from schema fields
    */
-  private determineIdType(
-    schema: OpenAPIV3.SchemaObject,
-    collectionName?: string,
-  ): "string" | "number" {
-    // Check if schema has an ID property
-    if (schema.properties && "id" in schema.properties) {
-      const idProperty = schema.properties.id;
-
-      // If it's not a reference object and has a type
-      if (!isReferenceObject(idProperty)) {
-        // Check if it's a number/integer type
-        if (idProperty.type === "integer" || idProperty.type === "number") {
-          return "number";
-        }
-      }
-    }
-
-    // For system collections, check their known ID types
-    if (collectionName && collectionName.startsWith("directus_")) {
-      return this.typeNameManager.getSystemCollectionIdType(collectionName);
-    }
-
-    // Default to string for all other cases
-    return "string";
-  }
-
-  /**
-   * Generates TypeScript interface from schema
-   */
-  generateSDKInterface(
-    schema: OpenAPIV3.SchemaObject,
-    refName: string,
-    collectionName?: string,
+  generateCollectionInterface(
+    collection: DirectusCollection,
+    fields: DirectusField[],
+    idType: "string" | "number" = "string"
   ): void {
-    if (!schema.properties) return;
+    const collectionName = collection.collection;
+    const typeName = this.typeNameManager.getTypeNameForCollection(collectionName);
+    const cleanTypeName = this.typeNameManager.cleanTypeName(typeName);
 
-    // Clean the type name to remove Items prefix
-    const typeName = this.typeNameManager.cleanTypeName(refName);
-
-    const nonSystemFields = Object.entries(schema.properties).filter(
-      ([propName]) =>
-        !this.systemCollectionManager.isSystemField(propName, collectionName),
-    );
-
-    if (nonSystemFields.length === 0) {
-      // If no properties, add default id field for regular collections
-      const keyword = this.options.useTypes ? "type" : "interface";
-      // Determine correct ID type
-      const idType = this.determineIdType(schema, collectionName);
-
-      const interfaceStr = `export ${keyword} ${typeName} ${this.options.useTypes ? "= " : ""}{
-  id: ${idType};
-}\n\n`;
-      this.typeTracker.addType(typeName, interfaceStr, ["id"]);
-      return;
-    }
-
+    // Use type or interface keyword based on options
     const keyword = this.options.useTypes ? "type" : "interface";
-    // Determine correct ID type
-    const idType = this.determineIdType(schema, collectionName);
 
-    let interfaceStr = `export ${keyword} ${typeName} ${this.options.useTypes ? "= " : ""}{
+    // Start building the interface
+    let interfaceStr = `export ${keyword} ${cleanTypeName} ${this.options.useTypes ? "= " : ""}{
   id: ${idType};\n`;
-    const properties: string[] = [];
 
-    // Always add id field first for regular collections
-    properties.push("id");
+    // Track properties for the type tracker
+    const properties: string[] = ["id"];
 
-    for (const [propName, propSchema] of nonSystemFields) {
-      if (typeof propSchema !== "object" || propName === "id") continue;
-      properties.push(propName);
+    // Process all fields except ID (which we already added)
+    for (const field of fields) {
+      if (field.field === "id") continue;
 
-      interfaceStr += this.propertyGenerator.generatePropertyDefinition(
-        propName,
-        propSchema,
-        false,
-        collectionName,
+      // Skip system fields for non-system collections or if includeSystemFields is false
+      if (this.systemCollectionManager.isSystemField(field.field, collectionName)) {
+        continue;
+      }
+
+      // Add the field to properties
+      properties.push(field.field);
+
+      // Generate the property definition using PropertyGenerator
+      interfaceStr += this.propertyGenerator.generateFieldDefinition(
+        field,
+        collectionName
       );
     }
 
+    // Close the interface
     interfaceStr += "}\n\n";
-    this.typeTracker.addType(typeName, interfaceStr, properties);
+
+    // Add the interface to TypeTracker
+    this.typeTracker.addType(cleanTypeName, interfaceStr, properties);
   }
 
   /**
    * Generates the final TypeScript definitions including the root schema interface
    */
-  generateTypeDefinitions(
-    collectionSchemas: Record<
-      string,
-      { ref: string; schema: OpenAPIV3.SchemaObject }
-    >,
-  ): string {
-    const validCollections = Object.entries(collectionSchemas).filter(
-      ([, { ref }]) => {
-        const typeName = this.typeNameManager.getTypeNameForCollection(ref);
-        const cleanTypeName = this.typeNameManager.cleanTypeName(typeName);
-        return this.typeTracker.hasValidContent(cleanTypeName);
-      },
-    );
-
+  generateRootType(collections: DirectusCollection[]): string {
     // First add all interfaces
     let source = "";
     for (const typeName of this.typeTracker.getAllTypeNames()) {
@@ -146,40 +93,44 @@ export class InterfaceGenerator {
     }
 
     // Then create the main schema type
-    if (validCollections.length > 0) {
+    if (collections.length > 0) {
       const keyword = this.options.useTypes ? "type" : "interface";
       source += `\nexport ${keyword} ${this.options.typeName} ${this.options.useTypes ? "= " : ""}{`;
 
       // First add non-system collections
-      const nonSystemCollections = validCollections.filter(
-        ([collectionName]) => !collectionName.startsWith("directus_"),
+      const nonSystemCollections = collections.filter(
+        (collection) => !collection.collection.startsWith("directus_")
       );
 
-      for (const [collectionName, { schema }] of nonSystemCollections) {
-        // Use the ExtendedSchemaObject type for checking x-singleton
-        const extendedSchema = schema as import("../types").ExtendedSchemaObject;
-        
-        // Check for singleton in both schema properties and collection metadata
-        // Determine if this is a singleton collection either from x-singleton or from the test data
-        const isSingleton = !!extendedSchema["x-singleton"] || collectionName === "settings";
-
-        // Use type name from our map, ensuring it's clean
+      for (const collection of nonSystemCollections) {
+        const collectionName = collection.collection;
         const typeName = this.typeNameManager.getTypeNameForCollection(collectionName);
         const cleanTypeName = this.typeNameManager.cleanTypeName(typeName);
+        
+        // Check for singleton collection
+        const isSingleton = collection.meta.singleton === true;
 
         source += `\n  ${collectionName}: ${cleanTypeName}${isSingleton ? "" : "[]"};`;
       }
 
       // Then add system collections with custom fields
-      const systemCollections = validCollections.filter(([collectionName]) =>
-        collectionName.startsWith("directus_"),
+      const systemCollections = collections.filter(
+        (collection) => collection.collection.startsWith("directus_")
       );
 
-      for (const [collectionName, { ref }] of systemCollections) {
-        const typeName = this.typeNameManager.getSystemCollectionTypeName(ref);
+      if (systemCollections.length > 0 && nonSystemCollections.length > 0) {
+        // Add separator if we have both system and non-system collections
+        source += "\n";
+      }
+
+      for (const collection of systemCollections) {
+        const collectionName = collection.collection;
+        const typeName = this.typeNameManager.getTypeNameForCollection(collectionName);
+        const cleanTypeName = this.typeNameManager.cleanTypeName(typeName);
+        
         // Skip system collections that have no custom fields (empty interfaces)
-        if (this.typeTracker.hasType(typeName)) {
-          source += `\n  ${collectionName}: ${typeName}[];`;
+        if (this.typeTracker.hasType(cleanTypeName)) {
+          source += `\n  ${collectionName}: ${cleanTypeName}[];`;
         }
       }
 

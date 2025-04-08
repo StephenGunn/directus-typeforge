@@ -1,567 +1,189 @@
-import type { OpenAPIV3_1 as OpenAPIV3 } from "openapi-types";
-import { isReferenceObject, isArraySchema } from "../utils/schema";
-import { TypeNameManager } from "./TypeNameManager";
-import type { ExtendedSchemaObject } from "../types";
+import { TypeNameManager } from './TypeNameManager';
+import { RelationshipTracker, RelationshipType } from './RelationshipTracker';
+import type { DirectusField } from '../types';
 
 /**
- * Generates TypeScript property definitions for interfaces
+ * Handles generation of TypeScript properties from Directus schema fields
  */
 export class PropertyGenerator {
   private typeNameManager: TypeNameManager;
   private useTypeReferences: boolean;
   private makeRequired: boolean;
+  private relationshipTracker?: RelationshipTracker;
+  private addTypedocNotes: boolean;
 
   constructor(
     typeNameManager: TypeNameManager,
-    useTypeReferences: boolean,
-    makeRequired: boolean = false,
+    useTypeReferences = false,
+    makeRequired = false,
+    addTypedocNotes = false,
+    relationshipTracker?: RelationshipTracker,
   ) {
     this.typeNameManager = typeNameManager;
     this.useTypeReferences = useTypeReferences;
     this.makeRequired = makeRequired;
+    this.addTypedocNotes = addTypedocNotes;
+    this.relationshipTracker = relationshipTracker;
   }
 
   /**
-   * Determines the appropriate TypeScript type for a property
+   * Maps Directus field types to TypeScript types
    */
-  determineSchemaType(
-    propSchema: OpenAPIV3.SchemaObject | OpenAPIV3.ReferenceObject,
-    defaultType = "string",
-  ): string {
-    if (isReferenceObject(propSchema)) {
-      return defaultType;
-    }
-
-    if (propSchema.type === "integer" || propSchema.type === "number") {
-      return "number";
-    } else if (propSchema.type === "boolean") {
-      return "boolean";
-    } else if (propSchema.type === "array") {
-      // For array types, use string[] as default
-      return "string[]";
-    } else if (propSchema.type === "object") {
-      return "Record<string, unknown>";
-    } else {
-      return (propSchema.type as string) || defaultType;
-    }
-  }
-
-  /**
-   * Generates TypeScript definition for a property
-   */
-  generatePropertyDefinition(
-    propName: string,
-    propSchema: OpenAPIV3.SchemaObject | OpenAPIV3.ReferenceObject,
-    isSystemCollection: boolean = false,
-    parentCollection?: string,
-  ): string {
-    // Special handling for ID fields to ensure correct typing
-    if (propName === "id") {
-      const idType = isReferenceObject(propSchema)
-        ? "string"
-        : propSchema.type === "integer" || propSchema.type === "number"
-          ? "number"
-          : "string";
-      return `  ${propName}: ${idType};\n`;
-    }
-
-    // Check for special field types used in Directus
-    const specialType = this.checkForSpecialFieldType(propSchema);
-    if (specialType) {
-      return `  ${propName}${this.makeRequired ? "" : "?"}: ${specialType};\n`;
-    }
-
-    // First check if this field is a reference to directus_users
-    // by analyzing foreign key relations in the schema
-    const isUserReference = 
-      propName === "user_created" ||
-      propName === "user_updated" ||
-      propName === "user" ||
-      propName === "author" ||
-      (parentCollection && this.typeNameManager.isKnownRelation(propName, parentCollection) && 
-       this.typeNameManager.getSystemTypeFromReference(propName, parentCollection) === "DirectusUser");
-
-    if (isUserReference) {
-      // For these fields, always use string | DirectusUser
-      if (this.useTypeReferences && !isSystemCollection) {
-        return `  ${propName}${this.makeRequired ? "" : "?"}: string | DirectusUser;\n`;
-      } else {
-        return `  ${propName}${this.makeRequired ? "" : "?"}: string;\n`;
+  private mapFieldTypeToTs(field: DirectusField): string {
+    // Check for special types first
+    if (field.meta.special) {
+      // Handle JSON fields
+      if (field.meta.special.includes("json") || field.type === "json") {
+        return "Record<string, unknown>";
+      }
+      
+      // Handle CSV fields
+      if (field.meta.special.includes("csv")) {
+        return "string[]";
+      }
+      
+      // Handle date/time fields
+      if (field.meta.special.includes("date-created") || 
+          field.meta.special.includes("date-updated") ||
+          field.meta.special.includes("timestamp")) {
+        return "string"; // or 'datetime' for Directus SDK
       }
     }
+    
+    // Map Directus types to TypeScript types
+    switch (field.type) {
+      case "string":
+      case "text":
+      case "hash":
+      case "uuid":
+        return "string";
+      case "integer":
+      case "bigInteger":
+      case "float":
+      case "decimal":
+      case "number":
+        return "number";
+      case "boolean":
+        return "boolean";
+      case "json":
+        return "Record<string, unknown>";
+      case "csv":
+        return "string[]";
+      case "dateTime":
+      case "date":
+      case "time":
+      case "timestamp":
+        return "string"; // or 'datetime' for Directus SDK
+      default:
+        // Default to string for unknown types
+        return "string";
+    }
+  }
 
-    // Check if this is a direct reference to a system collection type
-    const systemType = this.typeNameManager.getSystemTypeFromReference(
-      propName,
-      parentCollection,
+  /**
+   * Generates a property definition for a Directus field
+   */
+  generateFieldDefinition(
+    field: DirectusField,
+    collectionName: string
+  ): string {
+    // Add JSDoc comment if note exists and addTypedocNotes is enabled
+    let propertyDefinition = "";
+    if (this.addTypedocNotes && field.meta.note) {
+      propertyDefinition += `  /** ${field.meta.note} */\n`;
+    }
+    
+    // Check if this is a relationship field
+    if (
+      this.relationshipTracker &&
+      this.relationshipTracker.hasRelationship(collectionName, field.field)
+    ) {
+      // Generate property for relationship field
+      const relationship = this.relationshipTracker.getRelationship(
+        collectionName,
+        field.field
+      );
+      
+      if (relationship) {
+        return propertyDefinition + this.generateRelationshipProperty(
+          field.field,
+          relationship,
+          !this.makeRequired && field.schema.is_nullable
+        );
+      }
+    }
+    
+    // Regular field (not a relationship)
+    const tsType = this.mapFieldTypeToTs(field);
+    const isOptional = !this.makeRequired && field.schema.is_nullable;
+    
+    return propertyDefinition + `  ${field.field}${isOptional ? "?" : ""}: ${tsType};\n`;
+  }
+
+  /**
+   * Generates a property definition for a relationship field
+   */
+  private generateRelationshipProperty(
+    propertyName: string,
+    relationship: {
+      sourceCollection: string;
+      sourceField: string;
+      targetCollection: string;
+      relationshipType: RelationshipType;
+    },
+    isOptional: boolean
+  ): string {
+    // Get the type for the target collection
+    const targetType = this.typeNameManager.getTypeNameForCollection(
+      relationship.targetCollection
     );
-    if (systemType && this.useTypeReferences && !isSystemCollection) {
-      return `  ${propName}${this.makeRequired ? "" : "?"}: string | ${systemType};\n`;
-    }
-
-    if (isReferenceObject(propSchema)) {
-      return this.generateReferencePropertyDefinition(
-        propName,
-        propSchema,
-        isSystemCollection,
-        parentCollection,
-      );
-    }
-
-    if ("oneOf" in propSchema) {
-      return this.generateOneOfPropertyDefinition(
-        propName,
-        propSchema,
-        isSystemCollection,
-        parentCollection,
-      );
-    }
-
-    if (isArraySchema(propSchema)) {
-      return this.generateArrayPropertyDefinition(
-        propName,
-        propSchema,
-        isSystemCollection,
-        parentCollection,
-      );
-    }
-
-    // Check if this field is actually a relation
-    // We don't want to use the _id pattern blindly as it might match non-relation fields like "stripe_id"
-    if (this.isActualRelation(propName, parentCollection)) {
-      return this.generateRelationPropertyDefinition(
-        propName,
-        isSystemCollection,
-        parentCollection,
-      );
-    }
-
-    return this.generateBasicPropertyDefinition(propName, propSchema);
-  }
-
-  /**
-   * Check if field is a special Directus field type
-   */
-  private checkForSpecialFieldType(
-    propSchema: OpenAPIV3.SchemaObject | OpenAPIV3.ReferenceObject,
-  ): string | null {
-    if (isReferenceObject(propSchema)) {
-      return null;
-    }
-
-    // Cast to ExtendedSchemaObject to access additional properties
-    const extendedSchema = propSchema as ExtendedSchemaObject;
-
-    // Check for datetime format
-    if (
-      propSchema.type === "string" &&
-      (propSchema.format === "date-time" ||
-        propSchema.format === "date" ||
-        propSchema.format === "timestamp")
-    ) {
-      return "'datetime'";
-    }
-
-    // Check for CSV format
-    if (
-      propSchema.type === "array" &&
-      typeof propSchema.items === "object" &&
-      !isReferenceObject(propSchema.items) &&
-      propSchema.items.type === "string"
-    ) {
-      // This is likely a CSV field if there's a delimiter in the schema or format
-      if (
-        propSchema.format === "csv" ||
-        extendedSchema["x-directus-type"] === "csv"
-      ) {
-        return "'csv'";
+    
+    // Determine ID type for the related collection
+    const idType = this.getIdTypeForCollection(relationship.targetCollection);
+    
+    const isToManyRelationship =
+      relationship.relationshipType === RelationshipType.OneToMany ||
+      relationship.relationshipType === RelationshipType.ManyToMany;
+    
+    // Generate the property based on relationship type
+    if (isToManyRelationship) {
+      // To-many: use array type
+      if (this.useTypeReferences) {
+        return `  ${propertyName}${isOptional ? "?" : ""}: ${idType}[] | ${targetType}[];\n`;
+      } else {
+        return `  ${propertyName}${isOptional ? "?" : ""}: ${targetType}[];\n`;
+      }
+    } else {
+      // To-one: use single type
+      if (this.useTypeReferences) {
+        return `  ${propertyName}${isOptional ? "?" : ""}: ${idType} | ${targetType};\n`;
+      } else {
+        return `  ${propertyName}${isOptional ? "?" : ""}: ${targetType};\n`;
       }
     }
-
-    // Check for JSON field
-    if (
-      propSchema.format === "json" ||
-      extendedSchema["x-directus-type"] === "json"
-    ) {
-      return "'json'";
-    }
-
-    return null;
-  }
-
-  /**
-   * Check if a field is actually a relation based on collection context
-   */
-  private isActualRelation(
-    propName: string,
-    parentCollection?: string,
-  ): boolean {
-    // First check if this is a known relation field pattern
-    if (propName === "item" || propName === "collection") {
-      return true;
-    }
-
-    // If parent collection is known to have this as a relation, return true
-    if (
-      parentCollection &&
-      this.typeNameManager.isKnownRelation(propName, parentCollection)
-    ) {
-      return true;
-    }
-
-    // If name ends with _id, check if there's a matching collection
-    if (propName.endsWith("_id")) {
-      const baseCollectionName = propName.slice(0, -3);
-      return this.typeNameManager.isCollectionName(baseCollectionName);
-    }
-
-    return false;
   }
   
   /**
-   * Check if a field is a Many-to-Any relationship field
-   * M2A fields use 'item' field paired with 'collection' field to indicate relation to multiple collection types
+   * Gets the ID type for a collection
    */
-  private isM2AField(
-    propName: string,
-    parentCollection?: string,
-  ): boolean {
-    // In m2a junction tables, 'item' field contains the referenced item ID
-    // and 'collection' field indicates which collection the item belongs to
-    return propName === "item" && parentCollection !== undefined && parentCollection.includes("_related_");
-  }
-
-  /**
-   * Generate property definition for reference fields
-   */
-  private generateReferencePropertyDefinition(
-    propName: string,
-    propSchema: OpenAPIV3.ReferenceObject,
-    isSystemCollection: boolean = false,
-    parentCollection?: string,
-  ): string {
-    const refMatch = /^#\/components\/schemas\/([^/]+)$/.exec(propSchema.$ref);
-    if (!refMatch || !refMatch[1]) {
-      return `  ${propName}${this.makeRequired ? "" : "?"}: string;\n`;
-    }
-
-    const collectionName = refMatch[1];
-
-    // For system collections, use string type if it's a system collection definition
-    if (isSystemCollection) {
-      return `  ${propName}${this.makeRequired ? "" : "?"}: string;\n`;
-    }
-
-    // Check for system collection references in junction tables
-    const systemType = this.typeNameManager.getSystemTypeFromReference(
-      propName,
-      parentCollection,
-    );
-    if (systemType && this.useTypeReferences) {
-      return `  ${propName}${this.makeRequired ? "" : "?"}: string | ${systemType};\n`;
-    }
-
-    // Otherwise, use the type reference if enabled
-    if (this.useTypeReferences) {
-      // For system collections like Users, use DirectusUser
-      if (this.typeNameManager.isSystemCollection(collectionName)) {
-        const typeName =
-          this.typeNameManager.getSystemCollectionTypeName(collectionName);
-
-        return `  ${propName}${this.makeRequired ? "" : "?"}: string | ${typeName};\n`;
-      }
-
-      // For regular collections, use clean singular names, removing any Items prefix
-      let typeName =
-        this.typeNameManager.getTypeNameForCollection(collectionName);
-      typeName = this.typeNameManager.cleanTypeName(typeName);
-      return `  ${propName}${this.makeRequired ? "" : "?"}: string | ${typeName};\n`;
-    }
-
-    return `  ${propName}${this.makeRequired ? "" : "?"}: string;\n`;
-  }
-
-  /**
-   * Generate property definition for relation fields that are not references
-   */
-  private generateRelationPropertyDefinition(
-    propName: string,
-    isSystemCollection: boolean = false,
-    parentCollection?: string,
-  ): string {
-    // First check for system type references in junction tables
-    const systemType = this.typeNameManager.getSystemTypeFromReference(
-      propName,
-      parentCollection,
-    );
-    if (systemType && this.useTypeReferences && !isSystemCollection) {
-      return `  ${propName}${this.makeRequired ? "" : "?"}: string | ${systemType};\n`;
-    }
-
-    // Extract potential related collection name from field name (removing _id suffix)
-    const relatedCollectionName = propName.endsWith("_id")
-      ? propName.replace(/_id$/, "")
-      : propName;
-
-    // For relation fields
-    if (
-      this.useTypeReferences &&
-      relatedCollectionName &&
-      !isSystemCollection
-    ) {
-      // Check if this is a reference to a system collection
-      if (this.typeNameManager.isSystemCollection(relatedCollectionName)) {
-        const typeName = this.typeNameManager.getSystemCollectionTypeName(
-          relatedCollectionName,
-        );
-
-        return `  ${propName}${this.makeRequired ? "" : "?"}: string | ${typeName};\n`;
-      } else {
-        // For regular collections, use clean singular type
-        const collectionTypeName =
-          this.typeNameManager.getTypeNameForCollection(relatedCollectionName);
-
-        return `  ${propName}${this.makeRequired ? "" : "?"}: string | ${collectionTypeName};\n`;
-      }
-    }
-
-    return `  ${propName}${this.makeRequired ? "" : "?"}: string;\n`;
-  }
-
-  /**
-   * Generate property definition for oneOf fields
-   */
-  private generateOneOfPropertyDefinition(
-    propName: string,
-    propSchema: OpenAPIV3.SchemaObject,
-    isSystemCollection: boolean = false,
-    parentCollection?: string,
-  ): string {
-    // First check for system type references in junction tables
-    const systemType = this.typeNameManager.getSystemTypeFromReference(
-      propName,
-      parentCollection,
-    );
-    if (systemType && this.useTypeReferences && !isSystemCollection) {
-      return `  ${propName}${this.makeRequired ? "" : "?"}: string | ${systemType};\n`;
-    }
-
-    // Find a $ref in the oneOf array
-    const refItem = propSchema.oneOf?.find((item) => "$ref" in item);
-
-    // Also look for primitive types in oneOf to determine basic type (especially important for ID fields)
-    const primitiveType = propSchema.oneOf?.find(
-      (item) =>
-        !isReferenceObject(item) &&
-        (item.type === "integer" || item.type === "number"),
-    );
-
-    // If we find a primitive number type, use that as the base type
-    const baseType =
-      primitiveType &&
-      !isReferenceObject(primitiveType) &&
-      (primitiveType.type === "integer" || primitiveType.type === "number")
-        ? "number"
-        : "string";
-
-    if (refItem && "$ref" in refItem && typeof refItem.$ref === "string") {
-      // Extract proper type name
-      const refMatch = /^#\/components\/schemas\/([^/]+)$/.exec(refItem.$ref);
-      if (refMatch && refMatch[1]) {
-        const collectionName = refMatch[1];
-
-        if (this.useTypeReferences && !isSystemCollection) {
-          // For system collections
-          if (this.typeNameManager.isSystemCollection(collectionName)) {
-            const typeName =
-              this.typeNameManager.getSystemCollectionTypeName(collectionName);
-
-            return `  ${propName}${this.makeRequired ? "" : "?"}: ${baseType} | ${typeName};\n`;
-          }
-
-          // For regular collections, use clean singular names, removing any Items prefix
-          let typeName =
-            this.typeNameManager.getTypeNameForCollection(collectionName);
-          typeName = this.typeNameManager.cleanTypeName(typeName);
-          return `  ${propName}${this.makeRequired ? "" : "?"}: ${baseType} | ${typeName};\n`;
-        }
-      }
-
-      return `  ${propName}${this.makeRequired ? "" : "?"}: ${baseType};\n`;
-    }
-
-    return `  ${propName}${this.makeRequired ? "" : "?"}: unknown;\n`;
-  }
-
-  /**
-   * Generate property definition for array fields
-   */
-  private generateArrayPropertyDefinition(
-    propName: string,
-    propSchema: OpenAPIV3.ArraySchemaObject,
-    isSystemCollection: boolean = false,
-    parentCollection?: string,
-  ): string {
-    // Check if this is a M2A field - these should not be arrays but string | any
-    if (this.isM2AField(propName, parentCollection)) {
-      // In M2A relationships, "item" field references an ID that could be from any collection
-      return `  ${propName}${this.makeRequired ? "" : "?"}: string | any;\n`;
+  private getIdTypeForCollection(collectionName: string): string {
+    // System collections with numeric IDs
+    const numericIdCollections = [
+      "directus_permissions",
+      "directus_activity", 
+      "directus_presets",
+      "directus_revisions",
+      "directus_webhooks",
+      "directus_settings",
+      "directus_operations"
+    ];
+    
+    if (collectionName.startsWith("directus_") && 
+        numericIdCollections.includes(collectionName)) {
+      return "number";
     }
     
-    // Special handling for "collection" field in M2A relationships
-    if (propName === "collection" && parentCollection !== undefined && parentCollection.includes("_related_")) {
-      return `  ${propName}${this.makeRequired ? "" : "?"}: string | DirectusCollection;\n`;
-    }
-    
-    // First check for system type references in junction tables
-    const systemType = this.typeNameManager.getSystemTypeFromReference(
-      propName,
-      parentCollection,
-    );
-    if (systemType && this.useTypeReferences && !isSystemCollection) {
-      return `  ${propName}${this.makeRequired ? "" : "?"}: string[] | ${systemType}[];\n`;
-    }
-
-    // Handle arrays of references
-    if (isReferenceObject(propSchema.items)) {
-      // Extract proper collection name and type
-      const refMatch = /^#\/components\/schemas\/([^/]+)$/.exec(
-        propSchema.items.$ref,
-      );
-      if (refMatch && refMatch[1]) {
-        const collectionName = refMatch[1];
-
-        // For regular collections, use both types
-        if (this.useTypeReferences && !isSystemCollection) {
-          // For system collections
-          if (this.typeNameManager.isSystemCollection(collectionName)) {
-            const typeName =
-              this.typeNameManager.getSystemCollectionTypeName(collectionName);
-
-            return `  ${propName}${this.makeRequired ? "" : "?"}: string[] | ${typeName}[];\n`;
-          }
-
-          // For regular collections, remove Items prefix if present
-          let typeName =
-            this.typeNameManager.getTypeNameForCollection(collectionName);
-          typeName = this.typeNameManager.cleanTypeName(typeName);
-          return `  ${propName}${this.makeRequired ? "" : "?"}: string[] | ${typeName}[];\n`;
-        }
-      }
-
-      return `  ${propName}${this.makeRequired ? "" : "?"}: string[];\n`;
-    }
-
-    // Handle arrays with oneOf
-    if ("oneOf" in propSchema.items && Array.isArray(propSchema.items.oneOf)) {
-      const refItem = propSchema.items.oneOf.find((item) => "$ref" in item);
-
-      // Look for primitive types in oneOf to determine base type array
-      const primitiveType = propSchema.items.oneOf?.find(
-        (item) =>
-          !isReferenceObject(item) &&
-          (item.type === "integer" || item.type === "number"),
-      );
-
-      // If we find a primitive number type, use that as the base type
-      const baseType =
-        primitiveType &&
-        !isReferenceObject(primitiveType) &&
-        (primitiveType.type === "integer" || primitiveType.type === "number")
-          ? "number[]"
-          : "string[]";
-
-      if (refItem && "$ref" in refItem && typeof refItem.$ref === "string") {
-        // Extract proper collection name and type
-        const refMatch = /^#\/components\/schemas\/([^/]+)$/.exec(refItem.$ref);
-        if (refMatch && refMatch[1]) {
-          const collectionName = refMatch[1];
-
-          // For arrays of items with oneOf
-          if (this.useTypeReferences && !isSystemCollection) {
-            // For system collections
-            if (this.typeNameManager.isSystemCollection(collectionName)) {
-              const typeName =
-                this.typeNameManager.getSystemCollectionTypeName(
-                  collectionName,
-                );
-
-              return `  ${propName}${this.makeRequired ? "" : "?"}: ${baseType} | ${typeName}[];\n`;
-            }
-
-            // For regular collections, remove Items prefix if present
-            let typeName =
-              this.typeNameManager.getTypeNameForCollection(collectionName);
-            typeName = this.typeNameManager.cleanTypeName(typeName);
-            return `  ${propName}${this.makeRequired ? "" : "?"}: ${baseType} | ${typeName}[];\n`;
-          }
-        }
-      }
-
-      return `  ${propName}${this.makeRequired ? "" : "?"}: ${baseType};\n`;
-    }
-
-    // Handle simple array types
-    if ("type" in propSchema.items) {
-      if (propSchema.items.type === "integer") {
-        return `  ${propName}${this.makeRequired ? "" : "?"}: number[];\n`;
-      } else if (propSchema.items.type === "string") {
-        return `  ${propName}${this.makeRequired ? "" : "?"}: string[];\n`;
-      }
-    }
-
-    return `  ${propName}${this.makeRequired ? "" : "?"}: unknown[];\n`;
-  }
-
-  /**
-   * Generate property definition for basic fields
-   */
-  private generateBasicPropertyDefinition(
-    propName: string,
-    propSchema: OpenAPIV3.SchemaObject,
-  ): string {
-    const baseType =
-      propSchema.type === "integer" || propSchema.type === "number"
-        ? "number"
-        : propSchema.type;
-
-    // If makeRequired is true, we ignore the nullable property
-    const optional =
-      !this.makeRequired &&
-      "nullable" in propSchema &&
-      propSchema.nullable === true;
-
-    // Handle special string formats
-    if (
-      baseType === "string" &&
-      "format" in propSchema &&
-      typeof propSchema.format === "string"
-    ) {
-      const format = propSchema.format;
-
-      if (["date", "time", "date-time", "timestamp"].includes(format)) {
-        return `  ${propName}${optional ? "?" : ""}: string;\n`;
-      }
-
-      if (format === "json") {
-        return `  ${propName}${optional ? "?" : ""}: unknown;\n`;
-      }
-
-      if (format === "csv") {
-        return `  ${propName}${optional ? "?" : ""}: string;\n`;
-      }
-    }
-
-    // Handle object type
-    if (baseType === "object") {
-      return `  ${propName}${optional ? "?" : ""}: Record<string, unknown>;\n`;
-    }
-
-    // Handle array type
-    if (baseType === "array") {
-      return `  ${propName}${optional ? "?" : ""}: unknown[];\n`;
-    }
-
-    return `  ${propName}${optional ? "?" : ""}: ${baseType ?? "unknown"};\n`;
+    // Default to string for UUIDs and other string IDs
+    return "string";
   }
 }
