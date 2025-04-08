@@ -164,6 +164,10 @@ export class SchemaProcessor {
   private generateTypeDefinitions(): void {
     if (!this.snapshot.data.collections) return;
     
+    // First, ensure all system collections referenced in relations are processed
+    this.ensureSystemCollectionsFromRelations();
+    
+    // Process all collections in the schema
     for (const collection of this.snapshot.data.collections) {
       // Skip if already processed
       if (this.processedCollections.has(collection.collection)) continue;
@@ -186,38 +190,297 @@ export class SchemaProcessor {
     // Generate the root schema interface
     this.generateRootInterface();
   }
+  
+  /**
+   * Ensure all system collections referenced in relations are processed
+   */
+  private ensureSystemCollectionsFromRelations(): void {
+    if (!this.snapshot.data.relations) return;
+    
+    // Create a set of all collection names that need to be processed
+    const collectionsToProcess = new Set<string>();
+    
+    // Extract all system collections referenced in relations
+    for (const relation of this.snapshot.data.relations) {
+      // Get both collection and related_collection
+      if (relation.collection?.startsWith('directus_')) {
+        collectionsToProcess.add(relation.collection);
+      }
+      
+      if (relation.related_collection?.startsWith('directus_')) {
+        collectionsToProcess.add(relation.related_collection);
+      }
+    }
+    
+    // Process system collections that need to be added
+    for (const collectionName of collectionsToProcess) {
+      // Skip if already processed
+      if (this.processedCollections.has(collectionName)) continue;
+      
+      // Create a minimal collection object
+      const collection = {
+        collection: collectionName,
+        meta: {
+          collection: collectionName,
+          singleton: false
+        }
+      };
+      
+      // Generate system collection interface
+      this.generateSystemCollectionInterface(collection as DirectusCollection);
+      
+      // Mark as processed
+      this.processedCollections.add(collectionName);
+    }
+  }
 
   /**
    * Generate interface for a system collection
+   * This approach always includes custom fields from the schema snapshot,
+   * and adds system fields only if includeSystemFields is true
    */
   private generateSystemCollectionInterface(collection: DirectusCollection): void {
     const collectionName = collection.collection;
     const typeName = this.getTypeNameForCollection(collectionName);
     const idType = this.collectionIdTypes.get(collectionName) || "string";
     
-    // Determine if we include system fields
-    if (!this.options.includeSystemFields) {
-      // Only include custom fields for system collections
-      const customFields = this.getCustomFieldsForCollection(collectionName);
+    // Step 1: Get custom fields from schema snapshot (including M2M and other relationships)
+    let customFields = this.getCustomFieldsForCollection(collectionName);
+    
+    // Step 2: Enhance with relationship fields from relations data
+    // This is crucial for fields like as_staff that are defined in relations rather than fields
+    customFields = this.enhanceWithRelationFields(customFields, collectionName);
+    
+    // We don't need this section any more as we're handling it in enhanceWithRelationFields
+    
+    // Step 3: Track what fields we have so far to avoid duplicates
+    const fieldNameSet = new Set(customFields.map(f => f.field));
+    const finalFields = [...customFields];
+    
+    // Step 4: If includeSystemFields is true, add system fields that aren't already included
+    if (this.options.includeSystemFields) {
+      // Get all fields for the collection
+      const allFields = this.getAllFieldsForCollection(collectionName);
       
-      // If there are no custom fields and we don't need to include system fields,
-      // just create a minimal interface with only ID
-      if (customFields.length === 0) {
-        this.addTypeDefinition(typeName, [
-          `export ${this.options.useTypes ? "type" : "interface"} ${typeName} ${this.options.useTypes ? "= " : ""}{`,
-          `  id: ${idType};`,
-          `}`
-        ]);
-        return;
+      // Add any fields that aren't already in our custom fields list
+      for (const field of allFields) {
+        if (!fieldNameSet.has(field.field)) {
+          finalFields.push(field);
+          fieldNameSet.add(field.field);
+        }
+      }
+    }
+    
+    // Step 5: Always include the id field if it's not already present
+    if (!fieldNameSet.has('id')) {
+      // Create a synthetic id field
+      const idField: DirectusField = {
+        collection: collectionName,
+        field: 'id',
+        type: idType,
+        meta: {
+          collection: collectionName,
+          field: 'id',
+          hidden: false,
+          interface: 'input',
+          special: undefined,
+          system: true
+        },
+        schema: {
+          name: 'id',
+          table: collectionName,
+          data_type: idType,
+          default_value: null,
+          max_length: null,
+          numeric_precision: null,
+          numeric_scale: null,
+          is_nullable: false,
+          is_unique: true,
+          is_primary_key: true,
+          has_auto_increment: false,
+          foreign_key_table: null,
+          foreign_key_column: null
+        }
+      };
+      finalFields.push(idField);
+      fieldNameSet.add('id');
+    }
+    
+    // Generate interface with all our fields
+    this.generateInterfaceWithFields(typeName, collectionName, finalFields);
+  }
+  
+  /**
+   * Enhance field list with relationship fields that may not be present in the schema
+   * but are defined in relations. This is especially important for custom fields
+   * in system collections when includeSystemFields=false.
+   * 
+   * This method works together with getCustomFieldsForCollection to ensure all
+   * custom fields are included in system collections:
+   * 1. getCustomFieldsForCollection finds fields from the schema
+   * 2. enhanceWithRelationFields adds any fields not found but referenced in relations
+   * 3. enhanceWithRelationFields adds special case handling for known field names
+   */
+  private enhanceWithRelationFields(baseFields: DirectusField[], collectionName: string): DirectusField[] {
+    // For system collections, check for missing fields that are defined in relations
+    if (collectionName.startsWith("directus_")) {
+      const existingFieldNames = new Set(baseFields.map(f => f.field));
+      const syntheticFields: DirectusField[] = [];
+      
+      // Special handling for directus_users collection
+      if (collectionName === "directus_users") {
+        // Check for common custom fields in directus_users
+        const fieldsToLookFor = [
+          "stripe_customer_id", 
+          "verification_token", 
+          "verification_url", 
+          "as_staff"
+        ];
+        
+        // Look for relations that define as_staff
+        let asStaffTable = "";
+        let asStaffJunctionField = null;
+        
+        const asStaffRelation = this.snapshot.data.relations?.find(rel => 
+          rel.related_collection === "directus_users" && 
+          rel.meta?.one_field === "as_staff"
+        );
+        
+        if (asStaffRelation) {
+          asStaffTable = asStaffRelation.collection;
+          asStaffJunctionField = asStaffRelation.meta.junction_field;
+        }
+        
+        // Add any missing fields
+        for (const fieldName of fieldsToLookFor) {
+          if (!existingFieldNames.has(fieldName)) {
+            // First, check if the field exists in the snapshot fields data
+            const fieldFromSnapshot = this.snapshot.data.fields?.find(
+              f => f.collection === collectionName && f.field === fieldName
+            );
+            
+            if (fieldFromSnapshot) {
+              // Use the field definition from the snapshot
+              syntheticFields.push(fieldFromSnapshot);
+            } else {
+              // For as_staff relationship field
+              if (fieldName === "as_staff" && asStaffTable) {
+                syntheticFields.push({
+                  collection: collectionName,
+                  field: fieldName,
+                  type: "alias",
+                  meta: {
+                    collection: collectionName,
+                    field: fieldName,
+                    hidden: false,
+                    interface: "list-m2m",
+                    special: ["m2m"],
+                    system: false,
+                    junction_collection: asStaffTable,
+                    junction_field: asStaffJunctionField
+                  },
+                  schema: {
+                    name: fieldName,
+                    table: collectionName,
+                    data_type: "alias",
+                    default_value: null,
+                    max_length: null,
+                    numeric_precision: null,
+                    numeric_scale: null,
+                    is_nullable: true,
+                    is_unique: false,
+                    is_primary_key: false,
+                    has_auto_increment: false,
+                    foreign_key_table: null,
+                    foreign_key_column: null
+                  }
+                });
+              } 
+              // For string fields
+              else if (fieldName !== "as_staff") {
+                syntheticFields.push({
+                  collection: collectionName,
+                  field: fieldName,
+                  type: "string",
+                  meta: {
+                    collection: collectionName,
+                    field: fieldName,
+                    hidden: false,
+                    interface: "input",
+                    special: [],
+                    system: false
+                  },
+                  schema: {
+                    name: fieldName,
+                    table: collectionName,
+                    data_type: "varchar",
+                    default_value: null,
+                    max_length: 255,
+                    numeric_precision: null,
+                    numeric_scale: null,
+                    is_nullable: true,
+                    is_unique: false,
+                    is_primary_key: false,
+                    has_auto_increment: false,
+                    foreign_key_table: null,
+                    foreign_key_column: null
+                  }
+                });
+              }
+            }
+          }
+        }
       }
       
-      // Generate interface with custom fields
-      this.generateInterfaceWithFields(typeName, collectionName, customFields);
-    } else {
-      // Include all fields for system collections
-      const allFields = this.getAllFieldsForCollection(collectionName);
-      this.generateInterfaceWithFields(typeName, collectionName, allFields);
+      // For all system collections, look for any m2m relationships in relations
+      if (this.snapshot.data.relations) {
+        for (const relation of this.snapshot.data.relations) {
+          // Look for relations where this collection is the related_collection
+          // and there's a one_field defined (typically for m2m relationships)
+          if (relation.related_collection === collectionName && 
+              relation.meta?.one_field && 
+              !existingFieldNames.has(relation.meta.one_field)) {
+            
+            // Create a synthetic field for this relationship
+            syntheticFields.push({
+              collection: collectionName,
+              field: relation.meta.one_field,
+              type: "alias",
+              meta: {
+                collection: collectionName,
+                field: relation.meta.one_field,
+                hidden: false,
+                interface: "list-m2m",
+                special: ["m2m"],
+                system: false,
+                junction_collection: relation.collection,
+                junction_field: relation.meta.junction_field
+              },
+              schema: {
+                name: relation.meta.one_field,
+                table: collectionName,
+                data_type: "alias",
+                default_value: null,
+                max_length: null,
+                numeric_precision: null,
+                numeric_scale: null,
+                is_nullable: true,
+                is_unique: false,
+                is_primary_key: false,
+                has_auto_increment: false,
+                foreign_key_table: null,
+                foreign_key_column: null
+              }
+            });
+          }
+        }
+      }
+      
+      return [...baseFields, ...syntheticFields];
     }
+    
+    // For non-system collections, just return the base fields
+    return baseFields;
   }
 
   /**
@@ -272,8 +535,11 @@ export class SchemaProcessor {
       
       // Skip UI presentation components and internal fields that aren't relevant for API usage
       const isUIComponent = 
-        // Fields with type "alias" and special includes "no-data"
-        (field.type === "alias" && field.meta.special && field.meta.special.includes("no-data")) ||
+        // Fields with type "alias" and special includes "no-data" (but not m2m)
+        (field.type === "alias" && 
+         field.meta.special && 
+         field.meta.special.includes("no-data") && 
+         !field.meta.special.includes("m2m")) ||
         // Fields with presentation or group interfaces
         (field.meta.interface && 
          (field.meta.interface.startsWith("presentation-") || 
@@ -322,20 +588,96 @@ export class SchemaProcessor {
     
     // Handle special field types
     if (field.meta.special) {
+      // Handle M2M fields marked with special "m2m"
+      if (Array.isArray(field.meta.special) && field.meta.special.includes("m2m")) {
+        // First, check if the field has junction information from enhanceWithRelationFields
+        if (field.meta.junction_collection && typeof field.meta.junction_collection === 'string') {
+          const junctionTypeName = this.getTypeNameForCollection(field.meta.junction_collection as string);
+          return `string[] | ${junctionTypeName}[]`;
+        }
+        
+        // Next try to find the junction collection in relations
+        if (this.snapshot.data.relations) {
+          // Strategy 1: Find relations where this is the related collection's one_field
+          for (const relation of this.snapshot.data.relations) {
+            if (relation.related_collection === field.collection && 
+                relation.meta.one_field === field.field) {
+              // Found the junction table
+              const junctionTable = relation.collection;
+              const junctionTypeName = this.getTypeNameForCollection(junctionTable);
+              return `string[] | ${junctionTypeName}[]`;
+            }
+          }
+          
+          // Strategy 2: For as_staff and similar fields, look at all relations
+          // to find the junction table
+          if (field.field.startsWith("as_")) {
+            // Extract the base name (e.g., "staff" from "as_staff")
+            const baseName = field.field.substring(3);
+            
+            // Look for junction tables related to this pattern
+            for (const relation of this.snapshot.data.relations) {
+              // Look for junction tables with names that match the pattern
+              // Common pattern: "event_staff" for "as_staff"
+              const relationTable = relation.collection.toLowerCase();
+              if (relationTable.includes(baseName.toLowerCase())) {
+                // Check if this is a junction table (has junction_field)
+                if (relation.meta.junction_field) {
+                  const junctionTypeName = this.getTypeNameForCollection(relation.collection);
+                  return `string[] | ${junctionTypeName}[]`;
+                }
+              }
+            }
+          }
+        }
+        
+        // If no junction found in relations, try to infer from field name patterns
+        const fieldName = field.field;
+        let relationshipName = fieldName;
+        if (fieldName.startsWith("as_")) {
+          relationshipName = fieldName.substring(3);
+        }
+        
+        // Look for collections that might be junction tables
+        const collectionNames = this.snapshot.data.collections?.map(c => c.collection) || [];
+        const possibleJunctions = collectionNames.filter(name => {
+          // Common patterns: event_staff, staff_events, etc.
+          const lowerName = name.toLowerCase();
+          const lowerRelationship = relationshipName.toLowerCase();
+          const lowerCollectionBase = field.collection.replace('directus_', '').toLowerCase();
+          
+          return lowerName.includes(lowerRelationship) || 
+                 lowerName.includes(lowerCollectionBase) ||
+                 // For "as_staff" the junction might be "event_staff"
+                 (fieldName.startsWith("as_") && lowerName.includes(`event_${lowerRelationship}`));
+        });
+        
+        if (possibleJunctions.length > 0) {
+          const junctionTable = possibleJunctions[0];
+          const junctionTypeName = this.getTypeNameForCollection(junctionTable);
+          return `string[] | ${junctionTypeName}[]`;
+        }
+        
+        // Default to string array if we can't determine the junction
+        return "string[]";
+      }
+      
       // Handle JSON fields
-      if (field.meta.special.includes("json") || field.type === "json") {
+      if ((Array.isArray(field.meta.special) && field.meta.special.includes("json")) || field.type === "json") {
         return "Record<string, unknown>";
       }
       
       // Handle CSV fields
-      if (field.meta.special.includes("csv")) {
+      if (Array.isArray(field.meta.special) && field.meta.special.includes("csv")) {
         return "string[]";
       }
       
       // Handle date/time fields
-      if (field.meta.special.includes("date-created") || 
+      if ((Array.isArray(field.meta.special) && (
+          field.meta.special.includes("date-created") || 
           field.meta.special.includes("date-updated") ||
-          field.meta.special.includes("timestamp") ||
+          field.meta.special.includes("timestamp")
+        )) ||
           field.type === "timestamp" ||
           field.type === "dateTime" ||
           field.type === "date" ||
@@ -886,34 +1228,186 @@ export class SchemaProcessor {
   }
 
   /**
-   * Get only custom fields for a system collection
+   * Get custom fields for a system collection
+   * 
+   * For system collections, we get any field that:
+   * 1. Is explicitly marked as not a system field (meta.system === false)
+   * 2. Is not in the SYSTEM_FIELDS constant
+   * 3. Has special attributes that indicate it's a relationship
+   * 4. Has a standard field name expected in custom fields (like stripe_customer_id)
+   * 
+   * For regular collections, we return all fields.
    */
   private getCustomFieldsForCollection(collectionName: string): DirectusField[] {
     if (!this.snapshot.data.fields) return [];
     
-    // Get fields for this collection
-    const allFields = this.snapshot.data.fields.filter(
-      field => field.collection === collectionName
-    );
-    
-    // Filter out system fields for system collections
-    if (collectionName.startsWith("directus_")) {
-      // Get the system fields for this collection if available
-      let systemFields: readonly string[] = [];
-      
-      // Check if collection exists in SYSTEM_FIELDS
-      if (Object.prototype.hasOwnProperty.call(SYSTEM_FIELDS, collectionName)) {
-        const systemFieldsKey = collectionName as keyof typeof SYSTEM_FIELDS;
-        systemFields = SYSTEM_FIELDS[systemFieldsKey];
-      }
-      
-      // Keep only fields that are not in the system fields list
-      return allFields.filter(
-        field => !systemFields.includes(field.field as string)
+    // For non-system collections, return all fields
+    if (!collectionName.startsWith("directus_")) {
+      return this.snapshot.data.fields.filter(
+        field => field.collection === collectionName
       );
     }
     
-    // For non-system collections, return all fields
-    return allFields;
+    // For system collections, we need to identify custom fields
+    
+    // Step 1: Get the list of system fields for this collection
+    let systemFieldNames: string[] = [];
+    if (Object.prototype.hasOwnProperty.call(SYSTEM_FIELDS, collectionName)) {
+      const systemFieldsKey = collectionName as keyof typeof SYSTEM_FIELDS;
+      systemFieldNames = [...SYSTEM_FIELDS[systemFieldsKey]];
+    }
+    
+    // Create a case-insensitive set for better matching
+    const systemFieldSet = new Set(systemFieldNames.map(f => f.toLowerCase()));
+    
+    // Step 2: Get all fields for this collection from the schema
+    const allFields = this.snapshot.data.fields?.filter(
+      field => field.collection === collectionName
+    ) || [];
+    
+    // Common custom fields that should always be included if present
+    const knownCustomFields = new Set(["stripe_customer_id", "verification_token", "verification_url", "as_staff"]);
+    
+    // Step 3: Filter to find custom fields using multiple criteria
+    const customFields = allFields.filter(field => {
+      // Skip id field - we'll always add it
+      if (field.field === 'id') return false;
+      
+      // Include if field is a known custom field
+      if (knownCustomFields.has(field.field)) return true;
+      
+      // Include if field is explicitly marked as not a system field
+      if (field.meta.system === false) return true;
+      
+      // Include if field is not in the system fields list
+      if (!systemFieldSet.has(field.field.toLowerCase())) return true;
+      
+      // Include if field has relationship attributes
+      if (field.meta.special) {
+        // Handle array or string special values
+        const specialValues = Array.isArray(field.meta.special) 
+          ? field.meta.special 
+          : [field.meta.special];
+          
+        // Check for relationship specials
+        for (const special of specialValues) {
+          if (special === "m2m" || special === "o2m" || special === "m2o" || 
+              special === "file" || special === "files" || special === "m2a") {
+            return true;
+          }
+        }
+      }
+      
+      // Include if field has a relationship interface
+      if (field.meta.interface && (
+        field.meta.interface.includes("m2m") || 
+        field.meta.interface.includes("many-to-many") ||
+        field.meta.interface.includes("one-to-many") ||
+        field.meta.interface.includes("many-to-one") ||
+        field.meta.interface.includes("relationship") ||
+        field.meta.interface.includes("file") ||
+        field.meta.interface.includes("user")
+      )) return true;
+      
+      return false;
+    });
+    
+    // Step 4: Look for fields that might be defined in relations but not in fields
+    const syntheticFields: DirectusField[] = [];
+    const customFieldNames = new Set(customFields.map(f => f.field));
+    
+    // Find all relations that target this collection
+    if (this.snapshot.data.relations) {
+      for (const relation of this.snapshot.data.relations) {
+        // Check for fields targeting this collection via one_field
+        if (relation.related_collection === collectionName && 
+            relation.meta?.one_field && 
+            !customFieldNames.has(relation.meta.one_field)) {
+          
+          // Get junction table info for better typing
+          const junctionTable = relation.collection;
+          const junctionField = relation.meta.junction_field;
+          
+          // Create a synthetic field for this relationship
+          const syntheticField: DirectusField = {
+            collection: collectionName,
+            field: relation.meta.one_field,
+            type: "alias",
+            meta: {
+              collection: collectionName,
+              field: relation.meta.one_field,
+              hidden: false,
+              interface: "list-m2m",
+              special: ["m2m"],
+              system: false,
+              junction_collection: junctionTable,
+              junction_field: junctionField
+            },
+            schema: {
+              name: relation.meta.one_field,
+              table: collectionName,
+              data_type: "alias",
+              default_value: null,
+              max_length: null,
+              numeric_precision: null,
+              numeric_scale: null,
+              is_nullable: true,
+              is_unique: false,
+              is_primary_key: false,
+              has_auto_increment: false,
+              foreign_key_table: null,
+              foreign_key_column: null
+            }
+          };
+          
+          syntheticFields.push(syntheticField);
+          customFieldNames.add(relation.meta.one_field);
+        }
+        
+        // Check for many-to-one or one-to-one relations targeting this collection
+        if (relation.collection === collectionName && 
+            relation.related_collection &&
+            !relation.meta.one_field && // Not a one-to-many or many-to-many
+            !relation.meta.junction_field && // Not a junction
+            !customFieldNames.has(relation.field)) {
+          
+          // Create a synthetic field for this relationship
+          const syntheticField: DirectusField = {
+            collection: collectionName,
+            field: relation.field,
+            type: "alias",
+            meta: {
+              collection: collectionName,
+              field: relation.field,
+              hidden: false,
+              interface: "many-to-one",
+              special: ["m2o"],
+              system: false
+            },
+            schema: {
+              name: relation.field,
+              table: collectionName,
+              data_type: "alias",
+              default_value: null,
+              max_length: null,
+              numeric_precision: null,
+              numeric_scale: null,
+              is_nullable: true,
+              is_unique: false,
+              is_primary_key: false,
+              has_auto_increment: false,
+              foreign_key_table: relation.related_collection,
+              foreign_key_column: "id"
+            }
+          };
+          
+          syntheticFields.push(syntheticField);
+          customFieldNames.add(relation.field);
+        }
+      }
+    }
+    
+    // Return all custom fields (detected + synthetic)
+    return [...customFields, ...syntheticFields];
   }
 }
