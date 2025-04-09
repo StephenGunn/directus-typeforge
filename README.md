@@ -25,12 +25,14 @@ and compatibility.
   authentication
 - **Relationship Handling:** Generate proper TypeScript types for all
   relationship types (M2O, O2M, M2M, and M2A)
-- **Type Name Conventions:** Generate appropriate type names by converting collection names
-  to PascalCase and automatically handling pluralization (e.g., `Event` for an `events` 
-  collection, while preserving singleton collection names like `Settings` or `Globals`)
+- **Type Name Conventions:** Generate appropriate type names by converting
+  collection names to PascalCase and automatically handling pluralization (e.g.,
+  `Event` for an `events` collection, while preserving singleton collection
+  names like `Settings` or `Globals`)
 - **SDK Compatibility:** Generated types work seamlessly with the Directus SDK
 - **Customizable Output:** Control type generation behavior with various options
-- **Configurable Architecture:** All type detection patterns and mappings use a centralized configuration system
+- **Configurable Architecture:** All type detection patterns and mappings use a
+  centralized configuration system
 
 ## Installation
 
@@ -71,9 +73,9 @@ directus-typeforge [options]
 | `--makeRequired`        | `-m`  | Make all fields required (no optional '?' syntax) | `true`           |
 | `--includeSystemFields` | `-s`  | Include all system fields in system collections   | `true`           |
 | `--addTypedocNotes`     | `-d`  | Add JSDoc comments from field notes               | `true`           |
-| `--debug`               |       | Enable debug logging                               | `false`          |
-| `--logLevel`            |       | Set log level (error, warn, info, debug, trace)    | `info`           |
-| `--logFile`             |       | Path to write debug logs                           |                  |
+| `--debug`               |       | Enable debug logging                              | `false`          |
+| `--logLevel`            |       | Set log level (error, warn, info, debug, trace)   | `info`           |
+| `--logFile`             |       | Path to write debug logs                          |                  |
 
 **only disable `--useTypeReferences` for very specific debugging, it will make
 all of your relational types break.**
@@ -238,237 +240,10 @@ async function getArticles() {
 export type Article = Awaited<ReturnType<typeof getArticles>>;
 ```
 
-## How It Works
-
-TypeForge analyzes your Directus schema through the schema snapshot, extracting
-collection information, field definitions, and relationship mappings:
-
-1. **Schema Reading:** Fetches the schema from a file or live Directus instance
-   using `/schema/snapshot` endpoint
-2. **Collection Registration:** Identifies collections and determines their ID
-   types
-3. **Relationship Analysis:** Detects relationships between collections (M2O,
-   O2M, M2M, M2A)
-4. **Type Generation:** Creates TypeScript interfaces for each collection
-5. **Field Type Mapping:** Maps Directus field types to appropriate TypeScript
-   types
-6. **System Collection Handling:** Properly processes Directus system
-   collections
-7. **Root Type Creation:** Generates a root interface that includes all
-   collections with appropriate types
-
-## Architecture
-
-TypeForge uses a modular, configuration-driven architecture to improve maintainability and adaptability:
-
-### Configuration System
-
-All configurable aspects of the type generation process are centralized in the `/src/config` directory:
-
-- **Field Types:** Maps Directus field types to TypeScript types
-- **System Collections:** Defines standard system collections and their properties
-- **System Fields:** Lists all system fields for each Directus system collection
-- **Relationship Patterns:** Contains patterns used to detect different relationship types
-
-This configuration-driven approach ensures:
-
-1. No hardcoded values throughout the codebase
-2. Easy adaptation to different Directus versions
-3. Simpler maintenance and extension
-
-### Service Architecture
-
-The code is organized into focused service classes:
-
-- **SchemaProcessor:** Coordinates the overall type generation process
-- **RelationshipProcessor:** Identifies and processes relationship patterns
-- **TypeNameManager:** Handles naming conventions for generated types
-- **TypeGenerator:** Creates the actual TypeScript code
-- **SystemFieldManager:** Manages system fields and their types
-
-## Singleton Collections
-
-In Directus, singleton collections represent a single object rather than a
-collection of items. TypeForge handles singleton collections in two important ways:
-
-1. **Type Name Generation:** For regular collections, TypeForge converts plural collection names to singular form (e.g., `events` becomes `Event` type). However, for singleton collections like `settings` or `globals`, TypeForge preserves the original name in PascalCase (e.g., `Settings` or `Globals`), maintaining their semantic meaning.
-
-2. **Root Interface Representation:** Singleton collections are represented as single objects (not arrays) in the generated root interface.
-
-TypeForge identifies singleton collections directly from the `singleton: true` flag in the collection metadata:
-
-```json
-// Schema snapshot
-{
-  "data": {
-    "collections": [
-      {
-        "collection": "settings",
-        "meta": {
-          "singleton": true, // <-- This flag identifies singleton collections
-          "accountability": "all"
-          // ... other metadata
-        },
-        "schema": {
-          "name": "settings"
-        }
-      }
-    ]
-  }
-}
-```
-
-This results in the following type generation behavior:
-
-```typescript
-// Type definition for a singleton collection - name is preserved in PascalCase
-export interface Settings {
-  id: string;
-  site_name: string;
-  logo: string | DirectusFile;
-  primary_color: string;
-  // ...other fields
-}
-
-// Type definition for a regular collection - pluralized name converted to singular
-export interface Article {
-  id: string;
-  title: string;
-  content: string;
-  // ...other fields
-}
-
-// Root interface representation
-export interface ApiCollections {
-  settings: Settings; // <-- Singleton (not an array)
-  articles: Article[]; // <-- Regular collections are arrays
-  globals: Globals; // <-- Another singleton example
-}
-```
-
-This approach ensures accurate type representation for both regular collections and singletons, while preserving the semantic meaning of the collection names.
-
-## Junction Tables and Relationships
-
-TypeForge automatically handles all Directus relationship types, including
-proper typing for junction tables:
-
-### Many-to-Many (M2M) Relationships
-
-For many-to-many relationships, TypeForge creates proper junction table
-interfaces with all necessary fields:
-
-```typescript
-// Main collection referencing a many-to-many relationship
-export interface Article {
-  id: number;
-  categories: string[]; // Generated by Directus for the M2M relationship
-}
-
-// Junction table interface with both sides of the relationship
-export interface ArticlesCategory {
-  id: number;
-  articles_id: number[] | Article[];
-  categories_id: string[] | Category[];
-}
-```
-
-### Many-to-Any (M2A) Relationships
-
-For many-to-any relationships, where items from multiple collections can be
-related to a single item:
-
-```typescript
-// Main collection with a many-to-any relationship
-export interface Product {
-  id: number;
-  related_items: string; // Generated by Directus for the M2A relationship
-}
-
-// Junction table for the many-to-any relationship
-export interface ProductsRelatedItem {
-  id: number;
-  products_id: number[] | Product[]; // Reference to the parent product
-  item: string; // ID of the related item
-  collection: string; // Collection name of the related item
-}
-```
-
-## System Collections
-
-TypeForge handles system collections in two different ways, controlled by the
-`--includeSystemFields` option:
-
-### Minimal System Collections (--includeSystemFields=false)
-
-When `includeSystemFields` is false, system collections that are referenced in
-relationships are generated with minimal interfaces (just the ID field):
-
-```typescript
-export interface DirectusUser {
-  id: string;
-}
-```
-
-This approach:
-
-- Minimizes potential compatibility issues across Directus versions
-- Reduces the size of generated type files
-- Works well when you don't need detailed system collection types
-
-### Full System Collections (--includeSystemFields=true)
-
-When `includeSystemFields` is true (the default), system collections are
-generated with all standard fields:
-
-```typescript
-export interface DirectusUser {
-  id: string;
-  first_name: string;
-  last_name: string;
-  email: string;
-  // ... all other standard fields
-  // Plus any custom fields you've added
-}
-```
-
-This approach:
-
-- Provides detailed type information for system collections
-- Includes all standard fields for the collection
-- Allows for better type checking when working deeply with system collections
-
-### System Field Identification
-
-TypeForge identifies system fields using two approaches:
-
-1. When using the `--fieldsFile` parameter, fields are identified by the `meta.system` property in the fields data from the Directus API. This data can be obtained from the `/fields` endpoint:
-
-```bash
-# Obtain fields data from your Directus instance
-curl -H "Authorization: Bearer YOUR_TOKEN" https://your-directus.com/fields > all-fields.json
-
-# Use this data when generating types
-npx directus-typeforge -i schema-snapshot.json -f all-fields.json -o ./types/schema.ts
-```
-
-2. When no fields data is provided, TypeForge uses a predefined set of known system fields as a fallback.
-
-This implementation allows TypeForge to:
-
-- Use the actual metadata from your specific Directus instance when available
-- Handle different versions of Directus with varying system field configurations
-- Process system fields according to their official designation in the API
-
-For contributors maintaining this package, a utility script is available to update the fallback system field definitions:
-
-```bash
-npm run update-system-fields -- --host https://your-directus.com --token YOUR_TOKEN
-```
-
 ## Debugging
 
-If you encounter issues with type generation, TypeForge provides comprehensive debugging options:
+If you encounter issues with type generation, TypeForge provides comprehensive
+debugging options:
 
 ### Enable Debug Logging
 
@@ -504,6 +279,7 @@ npx directus-typeforge -i schema-snapshot.json --debug --logLevel debug --logFil
 ```
 
 The logs contain detailed information about:
+
 - Relationship detection and resolution
 - Field type mapping decisions
 - Junction table identification
@@ -522,21 +298,6 @@ The logs contain detailed information about:
   standard TypeScript types for better type checking.
 - **Type Safety:** For more specific typing of JSON fields, you might need to
   manually extend the generated types with your application-specific interfaces.
-
-## Implementation Notes
-
-Directus TypeForge works directly with Directus schema snapshots instead of
-relying on OpenAPI. This approach:
-
-- Works with any Directus instance
-- Provides accurate type information through direct schema access
-- Simplifies relationship detection
-- Removes unnecessary dependencies
-- Sets defaults optimized for the Directus SDK
-
-The tool processes the schema snapshot to extract collections, fields, and
-relationships, then generates TypeScript interfaces that reflect your Directus
-data model.
 
 ## License
 

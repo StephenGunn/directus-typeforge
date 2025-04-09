@@ -4,6 +4,40 @@ A TypeScript type definition generator for Directus schemas. This tool processes
 Directus schema snapshots and generates corresponding TypeScript type definitions
 optimized for use with the Directus SDK.
 
+## How It Works
+
+TypeForge analyzes your Directus schema through the schema snapshot, extracting
+collection information, field definitions, and relationship mappings:
+
+1. **Schema Reading:** Fetches the schema from a file or live Directus instance
+   using `/schema/snapshot` endpoint
+2. **Collection Registration:** Identifies collections and determines their ID
+   types
+3. **Relationship Analysis:** Detects relationships between collections (M2O,
+   O2M, M2M, M2A)
+4. **Type Generation:** Creates TypeScript interfaces for each collection
+5. **Field Type Mapping:** Maps Directus field types to appropriate TypeScript
+   types
+6. **System Collection Handling:** Properly processes Directus system
+   collections
+7. **Root Type Creation:** Generates a root interface that includes all
+   collections with appropriate types
+
+## Implementation Notes
+
+Directus TypeForge works directly with Directus schema snapshots instead of
+relying on OpenAPI. This approach:
+
+- Works with any Directus instance
+- Provides accurate type information through direct schema access
+- Simplifies relationship detection
+- Removes unnecessary dependencies
+- Sets defaults optimized for the Directus SDK
+
+The tool processes the schema snapshot to extract collections, fields, and
+relationships, then generates TypeScript interfaces that reflect your Directus
+data model.
+
 ## Project Structure
 
 ```
