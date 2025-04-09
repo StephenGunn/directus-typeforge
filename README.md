@@ -30,6 +30,7 @@ and compatibility.
   collection, while preserving singleton collection names like `Settings` or `Globals`)
 - **SDK Compatibility:** Generated types work seamlessly with the Directus SDK
 - **Customizable Output:** Control type generation behavior with various options
+- **Configurable Architecture:** All type detection patterns and mappings use a centralized configuration system
 
 ## Installation
 
@@ -70,6 +71,9 @@ directus-typeforge [options]
 | `--makeRequired`        | `-m`  | Make all fields required (no optional '?' syntax) | `true`           |
 | `--includeSystemFields` | `-s`  | Include all system fields in system collections   | `true`           |
 | `--addTypedocNotes`     | `-d`  | Add JSDoc comments from field notes               | `true`           |
+| `--debug`               |       | Enable debug logging                               | `false`          |
+| `--logLevel`            |       | Set log level (error, warn, info, debug, trace)    | `info`           |
+| `--logFile`             |       | Path to write debug logs                           |                  |
 
 **only disable `--useTypeReferences` for very specific debugging, it will make
 all of your relational types break.**
@@ -114,6 +118,9 @@ npx directus-typeforge -i schema-snapshot.json --addTypedocNotes=false -o ./type
 
 # Generate using 'type' instead of 'interface'
 npx directus-typeforge -i schema-snapshot.json -u -o ./types/schema.ts
+
+# Enable debug logging to troubleshoot issues
+npx directus-typeforge -i schema-snapshot.json --debug --logLevel debug --logFile ./typeforge-debug.log -o ./types/schema.ts
 ```
 
 ## Expected Output
@@ -249,6 +256,35 @@ collection information, field definitions, and relationship mappings:
    collections
 7. **Root Type Creation:** Generates a root interface that includes all
    collections with appropriate types
+
+## Architecture
+
+TypeForge uses a modular, configuration-driven architecture to improve maintainability and adaptability:
+
+### Configuration System
+
+All configurable aspects of the type generation process are centralized in the `/src/config` directory:
+
+- **Field Types:** Maps Directus field types to TypeScript types
+- **System Collections:** Defines standard system collections and their properties
+- **System Fields:** Lists all system fields for each Directus system collection
+- **Relationship Patterns:** Contains patterns used to detect different relationship types
+
+This configuration-driven approach ensures:
+
+1. No hardcoded values throughout the codebase
+2. Easy adaptation to different Directus versions
+3. Simpler maintenance and extension
+
+### Service Architecture
+
+The code is organized into focused service classes:
+
+- **SchemaProcessor:** Coordinates the overall type generation process
+- **RelationshipProcessor:** Identifies and processes relationship patterns
+- **TypeNameManager:** Handles naming conventions for generated types
+- **TypeGenerator:** Creates the actual TypeScript code
+- **SystemFieldManager:** Manages system fields and their types
 
 ## Singleton Collections
 
@@ -429,6 +465,50 @@ For contributors maintaining this package, a utility script is available to upda
 ```bash
 npm run update-system-fields -- --host https://your-directus.com --token YOUR_TOKEN
 ```
+
+## Debugging
+
+If you encounter issues with type generation, TypeForge provides comprehensive debugging options:
+
+### Enable Debug Logging
+
+Use the `--debug` flag to enable detailed logging:
+
+```bash
+npx directus-typeforge -i schema-snapshot.json --debug -o ./types/schema.ts
+```
+
+### Set Log Level
+
+Control the verbosity with the `--logLevel` option:
+
+```bash
+# Available levels: error, warn, info, debug, trace (from least to most verbose)
+npx directus-typeforge -i schema-snapshot.json --debug --logLevel trace -o ./types/schema.ts
+```
+
+### Write Logs to File
+
+Save logs to a file for easier troubleshooting:
+
+```bash
+npx directus-typeforge -i schema-snapshot.json --debug --logFile ./debug.log -o ./types/schema.ts
+```
+
+### Debug Mode for Issue Reporting
+
+When reporting issues, include the debug logs:
+
+```bash
+npx directus-typeforge -i schema-snapshot.json --debug --logLevel debug --logFile ./typeforge-debug.log -o ./types/schema.ts
+```
+
+The logs contain detailed information about:
+- Relationship detection and resolution
+- Field type mapping decisions
+- Junction table identification
+- System field handling
+- Overall process flow
 
 ## Caveats
 

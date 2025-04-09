@@ -28,11 +28,20 @@ const targetFile = `${TYPES_DIR}/${OUT_FILE}`;
   // Get the correct path to the CLI script
   const cliPath = path.resolve(process.cwd(), 'build/cli.cjs');
 
-  // Build the command string - use node to run the local build directly
-  const command = `node ${cliPath} --host ${DIRECTUS_URL} -u true --email ${ADMIN_EMAIL} --password ${ADMIN_PASSWORD} --typeName ApiCollections --outFile ${targetFile} -m true -s true`;
+  // Get any additional arguments passed to this script (everything after --)
+  const additionalArgs = process.argv.indexOf('--') !== -1 
+    ? process.argv.slice(process.argv.indexOf('--') + 1).join(' ')
+    : '';
 
-  // Execute the command with output to debug.log
-  const command2 = `${command} > debug.log 2>&1`;
+  // Build the command string - use node to run the local build directly
+  const command = `node ${cliPath} --host ${DIRECTUS_URL} -u true --email ${ADMIN_EMAIL} --password ${ADMIN_PASSWORD} --typeName ApiCollections --outFile ${targetFile} -m true -s true ${additionalArgs}`;
+
+  console.log(`- ${command}`);
+
+  // Execute the command with output to debug.log if not specified in additionalArgs
+  const hasLogFile = additionalArgs.includes('--logFile');
+  // If user specified a log file, use their specified file, otherwise use debug.log
+  const command2 = hasLogFile ? command : `${command} > debug.log 2>&1`;
   exec(command2, (error, stdout, stderr) => {
     if (error) {
       spinner.fail(`Error: ${error.message}`);
@@ -47,6 +56,9 @@ const targetFile = `${TYPES_DIR}/${OUT_FILE}`;
     console.log(stdout);
 
     // Stop the spinner and print the success message
-    spinner.succeed(`Successfully generated a new type file at '${targetFile}' (see debug.log for details)`);
+    const logFileInfo = hasLogFile 
+      ? `(debug logs written to ${additionalArgs.match(/--logFile\s+([^\s]+)/)?.[1] || 'specified log file'})`
+      : '(see debug.log for details)';
+    spinner.succeed(`Successfully generated a new type file at '${targetFile}' ${logFileInfo}`);
   });
 })();

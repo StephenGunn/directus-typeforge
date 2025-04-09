@@ -1,5 +1,5 @@
 import { DirectusField } from "../types";
-import { SYSTEM_FIELDS } from "../constants/system_fields";
+import { systemFields, fieldTypeMapping } from "../config";
 
 /**
  * Manages system field operations and type mappings
@@ -157,7 +157,7 @@ export class SystemFieldManager {
    */
   getSystemFields(collectionName: string): string[] {
     if (collectionName.startsWith('directus_')) {
-      const systemCollectionFields = SYSTEM_FIELDS[collectionName as keyof typeof SYSTEM_FIELDS];
+      const systemCollectionFields = systemFields[collectionName as keyof typeof systemFields];
       if (systemCollectionFields) {
         return [...systemCollectionFields] as string[];
       }
@@ -170,7 +170,7 @@ export class SystemFieldManager {
    */
   isSystemField(collectionName: string, fieldName: string): boolean {
     if (collectionName.startsWith('directus_')) {
-      const systemCollectionFields = SYSTEM_FIELDS[collectionName as keyof typeof SYSTEM_FIELDS];
+      const systemCollectionFields = systemFields[collectionName as keyof typeof systemFields];
       
       if (systemCollectionFields && Array.isArray(systemCollectionFields)) {
         const fieldExists = systemCollectionFields.some(field => field === fieldName);
@@ -192,8 +192,8 @@ export class SystemFieldManager {
       return [];
     }
 
-    const systemFieldsKey = collectionName as keyof typeof SYSTEM_FIELDS;
-    const systemFieldNames = SYSTEM_FIELDS[systemFieldsKey];
+    const systemFieldsKey = collectionName as keyof typeof systemFields;
+    const systemFieldNames = systemFields[systemFieldsKey];
     if (!systemFieldNames) {
       return [];
     }

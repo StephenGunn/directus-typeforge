@@ -3,6 +3,7 @@ import {
   DirectusRelation, 
   RelationshipType 
 } from "../types";
+import { relationshipPatterns } from "../config";
 
 /**
  * Processes and analyzes relationships between collections
@@ -134,9 +135,11 @@ export class RelationshipProcessor {
     }
     
     // M2A relationships have no one_collection but have an item field
+    const { COLLECTION_INDICATORS, FIELD_NAMES } = relationshipPatterns.M2A_RELATIONSHIP_PATTERNS;
+    
     if (relation.meta.one_collection === null && 
-        relation.field === 'item' && 
-        relation.collection.includes('_related_')) {
+        relation.field === FIELD_NAMES.ITEM_FIELD && 
+        COLLECTION_INDICATORS.some(indicator => relation.collection.includes(indicator))) {
       return RelationshipType.ManyToAny;
     }
     
@@ -164,17 +167,16 @@ export class RelationshipProcessor {
       
       // 2. Secondary approach: Use field name patterns as fallback heuristic
       
-      // Common patterns for parent/child self-referential relationships
-      const parentFieldNames = ['parent', 'parent_id', 'parent_item', 'parent_record'];
-      const childFieldNames = ['children', 'child', 'replies', 'responses', 'subitems', 'descendants'];
+      // Common patterns for parent/child self-referential relationships from config
+      const { PARENT_FIELD_NAMES, CHILD_FIELD_NAMES } = relationshipPatterns.PARENT_CHILD_PATTERNS;
       
       // Check if this is a parent field (many-to-one, each item has one parent)
-      if (parentFieldNames.includes(relation.field)) {
+      if (PARENT_FIELD_NAMES.includes(relation.field)) {
         return RelationshipType.ManyToOne;
       }
       
       // Check if this is a children field (one-to-many, one item has many children)
-      if (childFieldNames.includes(relation.field)) {
+      if (CHILD_FIELD_NAMES.includes(relation.field)) {
         return RelationshipType.OneToMany;
       }
       
@@ -248,25 +250,21 @@ export class RelationshipProcessor {
       const collectionName = relation.collection;
       if (!collectionName) continue;
       
-      // Common naming patterns for junction tables
-      if (
-        // Tables with "pivot" in name
-        collectionName.includes('_pivot_') || 
-        // Tables with plural collection names on both sides
-        /[a-z]+s_[a-z]+s/.test(collectionName) ||
-        // Tables with the name pattern collection1_collection2 
-        collectionName.includes('_to_') ||
-        // Tables with "junction" in the name
-        collectionName.includes('_junction_') ||
-        // Tables with "join" in the name
-        collectionName.includes('_join_') ||
-        // Other common junction patterns
-        collectionName.endsWith('_relations') ||
-        collectionName.endsWith('_links') ||
-        collectionName.endsWith('_connections') ||
-        // Common naming patterns for junction tables
-        /_(?:assignments|sponsorships|members|items|participants|permissions|connections|relations|mappings|allocations|registrations|enrollments)$/.test(collectionName)
-      ) {
+      // Get junction table patterns from config
+      const { NAME_INDICATORS, REGEX_PATTERN } = relationshipPatterns.JUNCTION_TABLE_PATTERNS;
+      
+      // Check if the collection name contains any of the junction indicators
+      const hasJunctionIndicator = NAME_INDICATORS.some(indicator => 
+        collectionName.includes(indicator)
+      );
+      
+      // Check if the collection matches the regex pattern for junction tables
+      const matchesJunctionRegex = REGEX_PATTERN.test(collectionName);
+      
+      // Tables with plural collection names on both sides (common junction pattern)
+      const hasPluralPattern = /[a-z]+s_[a-z]+s/.test(collectionName);
+      
+      if (hasJunctionIndicator || matchesJunctionRegex || hasPluralPattern) {
         this.junctionTables.add(collectionName);
       }
     }
@@ -295,8 +293,12 @@ export class RelationshipProcessor {
     }
     
     // Log identified junction tables for debugging
-    console.log("\n===== Identified Junction Tables =====");
-    console.log(Array.from(this.junctionTables).join(", "));
+    const junctionTablesStr = Array.from(this.junctionTables).join(", ");
+    
+    // Import using require to avoid circular dependencies
+    const { logger } = require("../utils/logger");
+    logger.debug("===== Identified Junction Tables =====");
+    logger.debug(junctionTablesStr);
   }
 
   /**

@@ -1,4 +1,6 @@
 import { DirectusRelation, RelationshipType } from "../types";
+import { relationshipPatterns } from "../config";
+import { logger } from "../utils/logger";
 
 /**
  * Helper class for resolving relationships between collections,
@@ -23,7 +25,7 @@ export class RelationshipResolver {
    * Find a related collection for an alias field using multiple strategies
    */
   resolveRelatedCollection(fieldName: string, collectionName: string, relationshipType: RelationshipType): string {
-    console.log(`\nResolving related collection for ${collectionName}.${fieldName}`);
+    logger.debug(`Resolving related collection for ${collectionName}.${fieldName}`);
     
     // Try multiple resolution strategies in order of reliability
     let resolvedCollection = this.findByExplicitRelation(fieldName, collectionName);
@@ -47,19 +49,19 @@ export class RelationshipResolver {
    * METHOD 1: Find by explicit relation in schema
    */
   private findByExplicitRelation(fieldName: string, collectionName: string): string {
-    console.log(`  METHOD 1: Looking for explicit relation in schema`);
+    logger.trace(`METHOD 1: Looking for explicit relation in schema`);
     
     // Look for relations that have this field as one_field
     for (const relation of this.relations) {
       if (relation.meta?.one_field === fieldName && 
           relation.related_collection === collectionName) {
         
-        console.log(`    Found relation with ${fieldName} as one_field: points to ${relation.collection}`);
+        logger.trace(`Found relation with ${fieldName} as one_field: points to ${relation.collection}`);
         return relation.collection;
       }
     }
     
-    console.log(`    No explicit relation found`);
+    logger.trace(`No explicit relation found`);
     return '';
   }
 
@@ -67,25 +69,25 @@ export class RelationshipResolver {
    * METHOD 2: Find by name patterns
    */
   private findByNamePatterns(fieldName: string, collectionName: string): string {
-    console.log(`  METHOD 2: Looking for matching collection by name patterns`);
+    logger.trace(`METHOD 2: Looking for matching collection by name patterns`);
     
     // 1. Exact match (field 'users' → collection 'users')
     if (this.collections.includes(fieldName)) {
-      console.log(`    Pattern 1: Field name directly matches collection: ${fieldName}`);
+      logger.trace(`Pattern 1: Field name directly matches collection: ${fieldName}`);
       return fieldName;
     }
     
     // 2. Singular form if field is plural (field 'users' → collection 'user') 
     if (fieldName.endsWith('s') && this.collections.includes(fieldName.slice(0, -1))) {
       const singularName = fieldName.slice(0, -1);
-      console.log(`    Pattern 2: Field name matches singular collection: ${singularName}`);
+      logger.trace(`Pattern 2: Field name matches singular collection: ${singularName}`);
       return singularName;
     }
     
     // 3. Plural form if field is singular (field 'user' → collection 'users')
     if (this.collections.includes(`${fieldName}s`)) {
       const pluralName = `${fieldName}s`;
-      console.log(`    Pattern 3: Field name matches plural collection: ${pluralName}`);
+      logger.trace(`Pattern 3: Field name matches plural collection: ${pluralName}`);
       return pluralName;
     }
     
@@ -93,14 +95,14 @@ export class RelationshipResolver {
     const singularCollection = collectionName.replace(/s$/, '');
     if (this.collections.includes(`${singularCollection}_${fieldName}`)) {
       const combined = `${singularCollection}_${fieldName}`;
-      console.log(`    Pattern 4: Collection exists with parent prefix: ${combined}`);
+      logger.trace(`Pattern 4: Collection exists with parent prefix: ${combined}`);
       return combined;
     }
     
     // 5. Match against fieldname_parent pattern (field 'tickets' in 'event' → collection 'event_tickets')
     if (this.collections.includes(`${fieldName}_${singularCollection}`)) {
       const combined = `${fieldName}_${singularCollection}`;
-      console.log(`    Pattern 5: Collection exists with field prefix: ${combined}`);
+      logger.trace(`Pattern 5: Collection exists with field prefix: ${combined}`);
       return combined;
     }
     
@@ -109,7 +111,7 @@ export class RelationshipResolver {
     const suffixMatches = this.collections.filter(c => suffixPattern.test(c));
     
     if (suffixMatches.length === 1) {
-      console.log(`    Pattern 6: Found collection with matching suffix pattern: ${suffixMatches[0]}`);
+      logger.trace(`Pattern 6: Found collection with matching suffix pattern: ${suffixMatches[0]}`);
       return suffixMatches[0];
     }
     
@@ -118,7 +120,7 @@ export class RelationshipResolver {
     const prefixMatches = this.collections.filter(c => prefixPattern.test(c));
     
     if (prefixMatches.length === 1) {
-      console.log(`    Pattern 7: Found collection with matching prefix pattern: ${prefixMatches[0]}`);
+      logger.trace(`Pattern 7: Found collection with matching prefix pattern: ${prefixMatches[0]}`);
       return prefixMatches[0];
     }
     
@@ -133,12 +135,12 @@ export class RelationshipResolver {
       );
       
       if (scheduleMatches.length > 0) {
-        console.log(`    Pattern 8: Found schedule/items collection: ${scheduleMatches[0]}`);
+        logger.trace(`Pattern 8: Found schedule/items collection: ${scheduleMatches[0]}`);
         return scheduleMatches[0];
       }
     }
     
-    console.log(`    No matching pattern found`);
+    logger.trace(`No matching pattern found`);
     return '';
   }
 
@@ -146,7 +148,7 @@ export class RelationshipResolver {
    * METHOD 3: Find by analyzing existing relationships
    */
   private findByRelationshipAnalysis(fieldName: string, collectionName: string, relationshipType: RelationshipType): string {
-    console.log(`  METHOD 3: Looking for related collection by relationship analysis`);
+    logger.trace(`METHOD 3: Looking for related collection by relationship analysis`);
     
     // For O2M fields, look at all M2O relationships to find collections that have an M2O pointing to this collection
     if (relationshipType === RelationshipType.OneToMany) {
@@ -159,20 +161,20 @@ export class RelationshipResolver {
           if (relationship.type === RelationshipType.ManyToOne && 
               relationship.relatedCollection === collectionName) {
             potentialRelatedCollections.push(otherCollection);
-            console.log(`    Found M2O relationship from ${otherCollection}.${otherField} to ${collectionName}`);
+            logger.trace(`Found M2O relationship from ${otherCollection}.${otherField} to ${collectionName}`);
           }
         });
       });
       
       // If we have exactly one matching collection, use it
       if (potentialRelatedCollections.length === 1) {
-        console.log(`    Found exactly one matching related collection: ${potentialRelatedCollections[0]}`);
+        logger.trace(`Found exactly one matching related collection: ${potentialRelatedCollections[0]}`);
         return potentialRelatedCollections[0];
       }
       
       // If we have multiple, try to find the best match by field name similarity
       if (potentialRelatedCollections.length > 1) {
-        console.log(`    Found multiple potential related collections: ${potentialRelatedCollections.join(', ')}`);
+        logger.trace(`Found multiple potential related collections: ${potentialRelatedCollections.join(', ')}`);
         
         // Try to find a collection that matches or contains the field name
         const matchingCollection = potentialRelatedCollections.find(c => 
@@ -182,12 +184,12 @@ export class RelationshipResolver {
         );
         
         if (matchingCollection) {
-          console.log(`    Selected best match by name similarity: ${matchingCollection}`);
+          logger.trace(`Selected best match by name similarity: ${matchingCollection}`);
           return matchingCollection;
         }
         
         // Otherwise return the first one
-        console.log(`    No clear best match, using first: ${potentialRelatedCollections[0]}`);
+        logger.trace(`No clear best match, using first: ${potentialRelatedCollections[0]}`);
         return potentialRelatedCollections[0];
       }
     }
@@ -203,20 +205,20 @@ export class RelationshipResolver {
           if (relationship.type === RelationshipType.OneToMany && 
               relationship.relatedCollection === collectionName) {
             potentialRelatedCollections.push(otherCollection);
-            console.log(`    Found O2M relationship from ${otherCollection}.${otherField} to ${collectionName}`);
+            logger.trace(`Found O2M relationship from ${otherCollection}.${otherField} to ${collectionName}`);
           }
         });
       });
       
       // If we have exactly one matching collection, use it
       if (potentialRelatedCollections.length === 1) {
-        console.log(`    Found exactly one matching related collection: ${potentialRelatedCollections[0]}`);
+        logger.trace(`Found exactly one matching related collection: ${potentialRelatedCollections[0]}`);
         return potentialRelatedCollections[0];
       }
       
       // If we have multiple, try to find the best match by field name similarity
       if (potentialRelatedCollections.length > 1) {
-        console.log(`    Found multiple potential related collections: ${potentialRelatedCollections.join(', ')}`);
+        logger.trace(`Found multiple potential related collections: ${potentialRelatedCollections.join(', ')}`);
         
         // Try to find a collection that matches or contains the field name
         const matchingCollection = potentialRelatedCollections.find(c => 
@@ -226,17 +228,17 @@ export class RelationshipResolver {
         );
         
         if (matchingCollection) {
-          console.log(`    Selected best match by name similarity: ${matchingCollection}`);
+          logger.trace(`Selected best match by name similarity: ${matchingCollection}`);
           return matchingCollection;
         }
         
         // Otherwise return the first one
-        console.log(`    No clear best match, using first: ${potentialRelatedCollections[0]}`);
+        logger.trace(`No clear best match, using first: ${potentialRelatedCollections[0]}`);
         return potentialRelatedCollections[0];
       }
     }
     
-    console.log(`    No matching relationships found`);
+    logger.trace(`No matching relationships found`);
     return '';
   }
 
@@ -244,7 +246,7 @@ export class RelationshipResolver {
    * METHOD 4: Find by name similarity for ambiguous cases
    */
   private findByNameSimilarity(fieldName: string, collectionName: string): string {
-    console.log(`  METHOD 4: Looking for related collection by name similarity`);
+    logger.trace(`METHOD 4: Looking for related collection by name similarity`);
     
     // Handle common special cases based on field semantic meaning
     if (this.normalizedEquals(fieldName, 'ticket') || this.normalizedEquals(fieldName, 'registration')) {
@@ -255,7 +257,7 @@ export class RelationshipResolver {
       );
       
       if (registrationCollection) {
-        console.log(`    Found registration/ticket collection: ${registrationCollection}`);
+        logger.trace(`Found registration/ticket collection: ${registrationCollection}`);
         return registrationCollection;
       }
     }
@@ -267,7 +269,7 @@ export class RelationshipResolver {
       );
       
       if (priceCollection) {
-        console.log(`    Found price collection: ${priceCollection}`);
+        logger.trace(`Found price collection: ${priceCollection}`);
         return priceCollection;
       }
     }
@@ -281,7 +283,7 @@ export class RelationshipResolver {
       );
       
       if (scheduleCollection) {
-        console.log(`    Found schedule collection: ${scheduleCollection}`);
+        logger.trace(`Found schedule collection: ${scheduleCollection}`);
         return scheduleCollection;
       }
     }
@@ -344,11 +346,11 @@ export class RelationshipResolver {
     
     // Take the top match if it has a significant score
     if (scoredCollections.length > 0 && scoredCollections[0].score >= 30) {
-      console.log(`    Found related collection by name similarity: ${scoredCollections[0].collection} (score: ${scoredCollections[0].score})`);
+      logger.trace(`Found related collection by name similarity: ${scoredCollections[0].collection} (score: ${scoredCollections[0].score})`);
       return scoredCollections[0].collection;
     }
     
-    console.log(`    No high-scoring similar collection found`);
+    logger.trace(`No high-scoring similar collection found`);
     return '';
   }
 
@@ -360,11 +362,18 @@ export class RelationshipResolver {
       return this.normalizedNames.get(name)!;
     }
     
+    // Use configured patterns for name normalization
+    const { PREFIXES_TO_REMOVE, SUFFIXES_TO_REMOVE } = relationshipPatterns.NAME_NORMALIZATION;
+    
+    // Create regex for prefixes and suffixes
+    const prefixRegex = new RegExp(`^(${PREFIXES_TO_REMOVE.join('|')})`, '');
+    const suffixRegex = new RegExp(`(${SUFFIXES_TO_REMOVE.join('|')})$`, '');
+    
     const normalized = name
       .toLowerCase()
-      .replace(/^(directus_|event_|events_)/, '') // Remove common prefixes
-      .replace(/_items?$/, '')                    // Remove _item/_items suffix
-      .replace(/s$/, '');                         // Remove plural s
+      .replace(prefixRegex, '') // Remove configured prefixes
+      .replace(suffixRegex, '') // Remove configured suffixes  
+      .replace(/s$/, '');       // Remove plural s
     
     this.normalizedNames.set(name, normalized);
     return normalized;

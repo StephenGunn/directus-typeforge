@@ -1,4 +1,4 @@
-import { SYSTEM_FIELDS } from "../constants/system_fields";
+import { systemFields, systemCollections } from "../config";
 import { TypeTracker } from "./TypeTracker";
 import { TypeNameManager } from "./TypeNameManager";
 import { SystemFieldDetector } from "./SystemFieldDetector";
@@ -65,18 +65,18 @@ export class SystemCollectionManager {
       return this.systemFieldDetector.isSystemField(collection, fieldName);
     }
     
-    // Fallback to the hardcoded SYSTEM_FIELDS if no detector is available
-    // Check both original and lowercase collection name in SYSTEM_FIELDS
+    // Fallback to the configurable systemFields if no detector is available
+    // Check both original and lowercase collection name in systemFields
     const lowerCollection = collection.toLowerCase();
     
-    if (collection in SYSTEM_FIELDS) {
-      const fields = SYSTEM_FIELDS[collection as keyof typeof SYSTEM_FIELDS];
+    if (collection in systemFields) {
+      const fields = systemFields[collection as keyof typeof systemFields];
       return (fields as readonly string[]).includes(fieldName);
     } else {
       // Try to find a case-insensitive match in system fields
-      for (const key in SYSTEM_FIELDS) {
+      for (const key in systemFields) {
         if (key.toLowerCase() === lowerCollection) {
-          const fields = SYSTEM_FIELDS[key as keyof typeof SYSTEM_FIELDS];
+          const fields = systemFields[key as keyof typeof systemFields];
           return (fields as readonly string[]).includes(fieldName);
         }
       }
@@ -96,20 +96,18 @@ export class SystemCollectionManager {
       "DirectusFolder",
       "DirectusRole",
     ];
+    
+    // Get type to collection mapping from config
+    const typeToCollection = Object.entries(systemCollections.SYSTEM_COLLECTION_TYPE_NAMES)
+      .reduce((acc, [collection, typeName]) => {
+        acc[typeName] = collection;
+        return acc;
+      }, {} as Record<string, string>);
 
     for (const systemType of essentialSystemTypes) {
       if (!this.typeTracker.hasType(systemType)) {
-        // Get the corresponding collection name
-        const collectionName =
-          systemType === "DirectusFile"
-            ? "directus_files"
-            : systemType === "DirectusUser"
-              ? "directus_users"
-              : systemType === "DirectusFolder"
-                ? "directus_folders"
-                : systemType === "DirectusRole"
-                  ? "directus_roles"
-                  : null;
+        // Get the corresponding collection name from our mapping
+        const collectionName = typeToCollection[systemType];
 
         if (collectionName) {
           this.generateMinimalSystemCollectionInterface(collectionName);

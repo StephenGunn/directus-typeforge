@@ -6,6 +6,8 @@ import { readSchema, generateTypeScript } from "./index.js";
 import fs from "fs/promises";
 import { resolve } from "path";
 import ora from "ora";
+import { LOGGING_CONFIG } from "./config";
+import { logger } from "./utils/logger";
 
 /**
  * Main function that runs the CLI
@@ -86,6 +88,21 @@ const main = async (): Promise<void> => {
       description: "Add JSDoc comments from field notes",
       default: true,
     })
+    .option("debug", {
+      type: "boolean",
+      description: "Enable debug logging",
+      default: false,
+    })
+    .option("logLevel", {
+      type: "string",
+      description: "Set log level (error, warn, info, debug, trace)",
+      choices: ["error", "warn", "info", "debug", "trace"],
+      default: "info",
+    })
+    .option("logFile", {
+      type: "string",
+      description: "Path to write debug logs (enables file logging)",
+    })
     .check((argv) => {
       if (argv.snapshotFile) {
         // If snapshot file is provided, other options are not required
@@ -132,6 +149,29 @@ const main = async (): Promise<void> => {
     .parseAsync();
 
   try {
+    // Set up logging based on CLI options
+    LOGGING_CONFIG.DEBUG_ENABLED = argv.debug;
+    
+    // Set log level
+    const logLevelMap = {
+      'error': LOGGING_CONFIG.LOG_LEVELS.ERROR,
+      'warn': LOGGING_CONFIG.LOG_LEVELS.WARN,
+      'info': LOGGING_CONFIG.LOG_LEVELS.INFO,
+      'debug': LOGGING_CONFIG.LOG_LEVELS.DEBUG,
+      'trace': LOGGING_CONFIG.LOG_LEVELS.TRACE
+    };
+    LOGGING_CONFIG.CURRENT_LOG_LEVEL = logLevelMap[argv.logLevel as keyof typeof logLevelMap];
+    
+    // Set up log file if specified
+    if (argv.logFile) {
+      LOGGING_CONFIG.LOG_TO_FILE = true;
+      LOGGING_CONFIG.LOG_FILE_PATH = resolve(process.cwd(), argv.logFile);
+    }
+    
+    // Log startup information
+    logger.info("TypeForge CLI Started");
+    logger.debug("CLI Options:", argv);
+    
     const spinner = ora("Processing Directus schema...").start();
 
     // Read schema data
@@ -175,16 +215,42 @@ const main = async (): Promise<void> => {
       const outPath = resolve(process.cwd(), argv.outFile);
       await fs.writeFile(outPath, ts, "utf-8");
       spinner.succeed(`TypeScript types have been written to ${outPath}`);
+      logger.info(`Generated types written to ${outPath}`);
     } else {
       spinner.stop();
       console.log(ts);
+      logger.info("Generated types output to console");
     }
+    
+    logger.info("TypeForge completed successfully");
+    
   } catch (error: unknown) {
+    let errorMessage = "An unexpected error occurred.";
+    
     if (error instanceof Error) {
-      console.error(`Error: ${error.message}`);
+      errorMessage = error.message;
+      console.error(`Error: ${errorMessage}`);
+      logger.error(`Error: ${errorMessage}`, error.stack);
     } else {
-      console.error("An unexpected error occurred.");
+      console.error(errorMessage);
+      logger.error(errorMessage, error);
     }
+    
+    // If debug is enabled, show more detailed error information and log path
+    if (LOGGING_CONFIG.DEBUG_ENABLED) {
+      console.error("\nDebug mode enabled:");
+      
+      if (LOGGING_CONFIG.LOG_TO_FILE) {
+        console.error(`See full logs at: ${LOGGING_CONFIG.LOG_FILE_PATH}`);
+      } else {
+        console.error("For more detailed logs, use the --logFile option");
+      }
+      
+      console.error("\nTo report this issue, please include your debug logs.");
+    } else {
+      console.error("\nFor more detailed error information, run with --debug flag");
+    }
+    
     process.exit(1);
   }
 };

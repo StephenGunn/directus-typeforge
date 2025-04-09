@@ -1,4 +1,5 @@
 import { toPascalCase } from "../utils/string";
+import { systemCollections, relationshipPatterns } from "../config";
 
 /**
  * Manages type names, collection mappings, and naming conventions for TypeScript definitions
@@ -20,25 +21,17 @@ export class TypeNameManager {
    * Initialize the mapping between collection names and their type names
    */
   private initializeSystemCollectionMap(): void {
-    // Map standard Directus system collections to their Type names
-    this.systemCollectionMap.set("users", "DirectusUser");
-    this.systemCollectionMap.set("files", "DirectusFile");
-    this.systemCollectionMap.set("folders", "DirectusFolder");
-    this.systemCollectionMap.set("roles", "DirectusRole");
-    this.systemCollectionMap.set("activity", "DirectusActivity");
-    this.systemCollectionMap.set("permissions", "DirectusPermission");
-    this.systemCollectionMap.set("fields", "DirectusField");
-    this.systemCollectionMap.set("collections", "DirectusCollection");
-    this.systemCollectionMap.set("presets", "DirectusPreset");
-    this.systemCollectionMap.set("relations", "DirectusRelation");
-    this.systemCollectionMap.set("revisions", "DirectusRevision");
-    this.systemCollectionMap.set("webhooks", "DirectusWebhook");
-    this.systemCollectionMap.set("flows", "DirectusFlow");
-    this.systemCollectionMap.set("operations", "DirectusOperation");
-    this.systemCollectionMap.set("versions", "DirectusVersion");
-    this.systemCollectionMap.set("extensions", "DirectusExtension");
-    this.systemCollectionMap.set("comments", "DirectusComment");
-    this.systemCollectionMap.set("settings", "DirectusSetting");
+    // Map standard Directus system collections to their Type names from config
+    const typeNames = systemCollections.SYSTEM_COLLECTION_TYPE_NAMES;
+    
+    // Create mappings without the directus_ prefix for convenience
+    for (const [collectionName, typeName] of Object.entries(typeNames)) {
+      // Add the mapping without directus_ prefix
+      if (collectionName.startsWith('directus_')) {
+        const shortName = collectionName.replace('directus_', '');
+        this.systemCollectionMap.set(shortName, typeName);
+      }
+    }
 
     // Register these as known collections
     for (const collection of this.systemCollectionMap.keys()) {
@@ -253,19 +246,20 @@ export class TypeNameManager {
    * Get the appropriate ID type for system collections
    */
   getSystemCollectionIdType(collection: string): "string" | "number" {
-    // Most system collections have string ids, except for specific ones
-    const numberIdCollections = [
-      "directus_permissions",
-      "directus_activity",
-      "directus_presets",
-      "directus_revisions",
-      "directus_webhooks",
-      "directus_settings",
-      "directus_operations",
-    ];
-
-    // Case insensitive check
-    return numberIdCollections.some(c => c.toLowerCase() === collection.toLowerCase()) ? "number" : "string";
+    const lowerCollection = collection.toLowerCase();
+    
+    // Check if collection is in NUMBER_ID_COLLECTIONS (case insensitive)
+    const isNumberId = systemCollections.NUMBER_ID_COLLECTIONS.some(
+      c => c.toLowerCase() === lowerCollection
+    );
+    
+    // Check if collection is in STRING_ID_COLLECTIONS (case insensitive)
+    const isStringId = systemCollections.STRING_ID_COLLECTIONS.some(
+      c => c.toLowerCase() === lowerCollection
+    );
+    
+    // Return the appropriate type
+    return isNumberId ? "number" : "string";
   }
 
   /**
@@ -295,29 +289,33 @@ export class TypeNameManager {
     }
     
     // Handle common Directus user reference field patterns
-    if (
-      fieldName === "directus_users_id" ||
-      fieldName === "user_id" || 
-      fieldName === "user_created" ||
-      fieldName === "user_updated" ||
-      fieldName === "user" ||
-      fieldName === "owner" ||
-      fieldName === "created_by" ||
-      fieldName === "updated_by" ||
-      fieldName === "author"
-    ) {
+    const userReferenceFields = [
+      "directus_users_id",
+      "user_id",
+      "user_created",
+      "user_updated",
+      "user",
+      "owner",
+      "created_by",
+      "updated_by",
+      "author"
+    ];
+    
+    if (userReferenceFields.includes(fieldName)) {
       return "DirectusUser";
     }
 
     // Handle common Directus file reference field patterns
-    if (
-      fieldName === "directus_files_id" ||
-      fieldName === "file_id" ||
-      fieldName === "file" ||
-      fieldName === "image" ||
-      fieldName === "thumbnail" ||
-      fieldName === "avatar"
-    ) {
+    const fileReferenceFields = [
+      "directus_files_id",
+      "file_id",
+      "file",
+      "image",
+      "thumbnail",
+      "avatar"
+    ];
+    
+    if (fileReferenceFields.includes(fieldName)) {
       return "DirectusFile";
     }
 
