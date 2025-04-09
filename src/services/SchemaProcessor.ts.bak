@@ -1,0 +1,2980 @@
+import {
+  DirectusSchemaSnapshot,
+  DirectusCollection,
+  DirectusField,
+  DirectusRelation,
+  RelationshipType,
+  TypeDefinition,
+  GenerateTypeScriptOptions
+} from "../types";
+import { toPascalCase } from "../utils/string";
+import { SYSTEM_FIELDS } from "../constants/system_fields";
+import { SystemFieldDetector } from "./SystemFieldDetector";
+
+/**
+ * Core schema processor that converts Directus schema into TypeScript definitions
+ */
+export class SchemaProcessor {
+  private snapshot: DirectusSchemaSnapshot;
+  private options: Required<GenerateTypeScriptOptions>;
+  
+  // Track type definitions
+  private typeDefinitions: Map<string, TypeDefinition> = new Map();
+  
+  // Maps to track collection info and relationships
+  private collectionTypes: Map<string, string> = new Map();
+  private collectionIdTypes: Map<string, "string" | "number"> = new Map();
+  private relationships: Map<string, Map<string, { 
+    type: RelationshipType;
+    relatedCollection: string;
+    relatedType: string;
+    throughJunction?: string;
+  }>> = new Map();
+  
+  // Track processed collections to avoid duplication
+  private processedCollections: Set<string> = new Set();
+  
+  // Track all alias fields to resolve later
+  private aliasFields: Array<{
+    collection: string;
+    field: string;
+    fieldMeta: any;
+    special?: string[];
+  }> = [];
+  
+  // System collections with ID type = number
+  private readonly numberIdCollections = new Set([
+    "directus_permissions",
+    "directus_activity",
+    "directus_presets",
+    "directus_revisions",
+    "directus_webhooks",
+    "directus_settings",
+    "directus_operations",
+  ]);
+
+  constructor(
+    snapshot: DirectusSchemaSnapshot, 
+    options: GenerateTypeScriptOptions,
+    private systemFieldDetector?: SystemFieldDetector
+  ) {
+    this.snapshot = snapshot;
+    
+    // Set default options for best SDK compatibility
+    this.options = {
+      typeName: options.typeName,
+      useTypeReferences: options.useTypeReferences ?? true,
+      useTypes: options.useTypes ?? false,
+      makeRequired: options.makeRequired ?? true,
+      includeSystemFields: options.includeSystemFields ?? true,
+      addTypedocNotes: options.addTypedocNotes ?? true,
+    };
+  }
+
+  /**
+   * Process the schema and generate TypeScript type definitions
+   */
+  process(): string {
+    // Debug logging for fields we're interested in
+    console.log("=== Debugging fields of interest ===");
+    if (this.snapshot.data.fields) {
+      // EventsScheduleItem fields
+      const scheduleFields = this.snapshot.data.fields.filter(
+        f => f.collection === 'events_schedule_items'
+      );
+      console.log(`Found ${scheduleFields.length} fields for events_schedule_items`);
+      for (const field of scheduleFields) {
+        console.log(`Field: ${field.field}, Type: ${field.type}, Data Type: ${field.schema?.data_type || 'undefined'}`);
+      }
+      
+      // Look for scheduled_items field in any collection
+      const scheduledItemsFields = this.snapshot.data.fields.filter(
+        f => f.field === 'scheduled_items'
+      );
+      console.log(`\n=== Found ${scheduledItemsFields.length} fields named 'scheduled_items' ===`);
+      for (const field of scheduledItemsFields) {
+        console.log(`Collection: ${field.collection}, Type: ${field.type}`);
+        console.log(`  Meta:`, JSON.stringify(field.meta, null, 2));
+        console.log(`  Schema:`, JSON.stringify(field.schema, null, 2));
+      }
+      
+      // Look for all fields in the events collection
+      const eventsFields = this.snapshot.data.fields.filter(
+        f => f.collection === 'events'
+      );
+      console.log(`\n=== Found ${eventsFields.length} fields in events collection ===`);
+      
+      // Look for relevant alias fields in events collection
+      const eventsAliasFields = this.snapshot.data.fields.filter(
+        f => f.collection === 'events' && f.type === 'alias'
+      );
+      console.log(`\n=== Found ${eventsAliasFields.length} alias fields in events collection ===`);
+      for (const field of eventsAliasFields) {
+        console.log(`Field: ${field.field}, Special:`, JSON.stringify(field.meta?.special, null, 2));
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        console.log(`  Related collection:`, (field.meta as any).related_collection);
+      }
+      
+      // Debug for all relationships involving events_schedule_items
+      if (this.snapshot.data.relations) {
+        const scheduleItemsRelations = this.snapshot.data.relations.filter(
+          r => r.collection === 'events_schedule_items' || r.related_collection === 'events_schedule_items'
+        );
+        
+        console.log(`\n=== Found ${scheduleItemsRelations.length} relations involving events_schedule_items ===`);
+        for (const rel of scheduleItemsRelations) {
+          console.log(`Relation: ${rel.collection}.${rel.field} -> ${rel.related_collection}`);
+          console.log(`  Meta:`, JSON.stringify(rel.meta, null, 2));
+        }
+      }
+    } else {
+      console.log("No fields data in snapshot");
+    }
+    
+    this.registerCollections();
+    this.analyzeRelationships();
+    
+    // Collect all alias fields first
+    this.collectAliasFields();
+    
+    // Then add any missing O2M relationships
+    this.resolveAliasFields();
+    
+    // For backwards compatibility
+    this.addMissingO2MRelationships();
+    
+    // Debug relationships after resolving alias fields
+    console.log("\n=== RELATIONSHIP MAPPING AFTER RESOLVING ALIAS FIELDS ===");
+    for (const [collection, fields] of this.relationships.entries()) {
+      console.log(`Collection: ${collection}`);
+      for (const [field, relation] of fields.entries()) {
+        console.log(`  ${field}: ${relation.type} -> ${relation.relatedCollection}`);
+      }
+    }
+    
+    this.addVirtualFieldsForRelationships();
+    this.generateTypeDefinitions();
+    return this.buildOutput();
+  }
+  
+  /**
+   * Add missing O2M relationships based on alias fields in the schema
+   */
+  /**
+   * Collect all alias fields from the schema for later resolution
+   */
+  private collectAliasFields(): void {
+    if (!this.snapshot.data.fields) return;
+    
+    console.log("\n=== Collecting alias fields for later resolution ===");
+    
+    // Find all alias fields in the schema
+    const allAliasFields = this.snapshot.data.fields.filter(field => 
+      field.type === 'alias'
+    );
+    
+    // Store them for later resolution
+    for (const field of allAliasFields) {
+      this.aliasFields.push({
+        collection: field.collection,
+        field: field.field,
+        fieldMeta: field.meta,
+        special: field.meta?.special as string[] | undefined
+      });
+      
+      console.log(`Collected alias field: ${field.collection}.${field.field} (${field.meta?.special?.join(', ') || 'no special'})`);
+    }
+    
+    console.log(`Total collected alias fields: ${this.aliasFields.length}`);
+  }
+
+  /**
+   * Resolve all collected alias fields to their proper related collections
+   * This handles cases like PreEventSurvey.ticket -> EventRegistration
+   */
+  private resolveAliasFields(): void {
+    if (this.aliasFields.length === 0) return;
+    
+    console.log("\n=== Resolving all collected alias fields ===");
+    
+    // Process O2M alias fields first
+    const o2mFields = this.aliasFields.filter(field => 
+      field.special && Array.isArray(field.special) && field.special.includes('o2m')
+    );
+    
+    console.log(`Found ${o2mFields.length} O2M alias fields to resolve`);
+    
+    // Get all available collections for pattern matching
+    const allCollections = this.snapshot.data.collections?.map(c => c.collection) || [];
+    
+    // Process each alias O2M field
+    for (const aliasField of o2mFields) {
+      const collectionName = aliasField.collection;
+      const fieldName = aliasField.field;
+      
+      console.log(`\nResolving O2M field: ${collectionName}.${fieldName}`);
+      
+      // Skip if relationship already exists
+      if (this.relationships.has(collectionName) && 
+          this.relationships.get(collectionName)!.has(fieldName)) {
+        console.log(`  Relationship already exists for ${collectionName}.${fieldName}`);
+        continue;
+      }
+      
+      // Try to resolve the related collection using multiple methods
+      let resolvedCollection = '';
+      
+      // METHOD 1: Check relation data for direct information
+      if (this.snapshot.data.relations) {
+        // Look for relations that have this field as one_field
+        for (const relation of this.snapshot.data.relations) {
+          if (relation.meta?.one_field === fieldName && 
+              relation.related_collection === collectionName) {
+            
+            resolvedCollection = relation.collection;
+            console.log(`  Found relation with ${fieldName} as one_field: points to ${resolvedCollection}`);
+            break;
+          }
+        }
+      }
+      
+      // METHOD 2: Check for known patterns in schema
+      if (!resolvedCollection) {
+        // Special case for scheduled_items in events
+        if (fieldName === 'scheduled_items' && collectionName === 'events') {
+          resolvedCollection = 'events_schedule_items';
+          console.log(`  Special case: events.scheduled_items -> events_schedule_items`);
+        }
+        // Special case for ticket in PreEventSurvey -> should point to EventRegistration
+        else if (fieldName === 'ticket' && collectionName === 'pre_event_surveys') {
+          resolvedCollection = 'event_registrations';
+          console.log(`  Special case: pre_event_surveys.ticket -> event_registrations`);
+        }
+      }
+      
+      // METHOD 3: Try to find matching collection by name pattern
+      if (!resolvedCollection) {
+        // 1. Exact match (field 'users' → collection 'users')
+        if (allCollections.includes(fieldName)) {
+          resolvedCollection = fieldName;
+          console.log(`  Field name directly matches collection: ${fieldName}`);
+        }
+        // 2. Singular form if field is plural (field 'users' → collection 'user') 
+        else if (fieldName.endsWith('s') && allCollections.includes(fieldName.slice(0, -1))) {
+          resolvedCollection = fieldName.slice(0, -1);
+          console.log(`  Field name matches singular collection: ${resolvedCollection}`);
+        }
+        // 3. Match against parent_fieldname pattern (field 'prices' in 'tickets' → collection 'ticket_prices')
+        else if (allCollections.includes(`${collectionName.replace(/s$/, '')}_${fieldName}`)) {
+          resolvedCollection = `${collectionName.replace(/s$/, '')}_${fieldName}`;
+          console.log(`  Collection exists with parent prefix: ${resolvedCollection}`);
+        }
+        // 4. Look for any collection with fieldname as suffix
+        else {
+          const prefixPattern = new RegExp(`^\\w+_${fieldName}$`);
+          const prefixMatches = allCollections.filter(c => prefixPattern.test(c));
+          
+          if (prefixMatches.length === 1) {
+            resolvedCollection = prefixMatches[0];
+            console.log(`  Found collection with matching prefix pattern: ${resolvedCollection}`);
+          }
+        }
+      }
+      
+      // If we found a valid collection, create the relationship
+      if (resolvedCollection) {
+        // Make sure the collection has the relationship map
+        if (!this.relationships.has(collectionName)) {
+          this.relationships.set(collectionName, new Map());
+        }
+        
+        // Add the O2M relationship
+        this.relationships.get(collectionName)!.set(fieldName, {
+          type: RelationshipType.OneToMany,
+          relatedCollection: resolvedCollection,
+          relatedType: this.getTypeNameForCollection(resolvedCollection)
+        });
+        
+        console.log(`  Added resolved relationship: ${collectionName}.${fieldName} -> ${resolvedCollection}`);
+      } else {
+        console.log(`  WARNING: Could not resolve related collection for ${collectionName}.${fieldName}`);
+      }
+    }
+    
+    // After resolving all relationships, handle any remaining alias fields
+    // (like M2M or other types)
+    // This could be extended to handle other types of relationships
+  }
+          }
+        }
+      }
+      
+      // If we found a valid collection, create the relationship
+      if (resolvedCollection) {
+        // Make sure the collection has the relationship map
+        if (!this.relationships.has(collectionName)) {
+          this.relationships.set(collectionName, new Map());
+        }
+        
+        // Add the O2M relationship
+        this.relationships.get(collectionName)!.set(fieldName, {
+          type: RelationshipType.OneToMany,
+          relatedCollection: resolvedCollection,
+          relatedType: this.getTypeNameForCollection(resolvedCollection)
+        });
+        
+        console.log(`  Added resolved relationship: ${collectionName}.${fieldName} -> ${resolvedCollection}`);
+      } else {
+        console.log(`  WARNING: Could not resolve related collection for ${collectionName}.${fieldName}`);
+      }
+    }
+    
+    // After resolving all relationships, handle any remaining alias fields
+    // (like M2M or other types)
+    // This could be extended to handle other types of relationships
+  }
+  
+  /**
+   * Legacy method - now redirects to the new implementation
+   * Kept for compatibility
+   */
+  private addMissingO2MRelationships(): void {
+    // Now handled by collectAliasFields() and resolveAliasFields()
+    // This method remains for compatibility with existing code
+  }
+  
+  /**
+   * Add virtual fields for relationships that don't exist in the fields array
+   * This ensures that virtual fields like 'children' or 'replies' for self-referential 
+   * relationships will be included in the generated interfaces
+   */
+  private addVirtualFieldsForRelationships(): void {
+    // Process each collection's relationships
+    for (const [collectionName, relationshipMap] of this.relationships.entries()) {
+      // Get existing fields for this collection
+      const existingFields = this.getAllFieldsForCollection(collectionName);
+      const existingFieldNames = new Set(existingFields.map(f => f.field));
+      
+      // Look for relationships that don't have corresponding fields
+      for (const [fieldName, relationship] of relationshipMap.entries()) {
+        // Skip if field already exists
+        if (existingFieldNames.has(fieldName)) continue;
+        
+        console.log(`Adding virtual field ${collectionName}.${fieldName} for relationship to ${relationship.relatedCollection}`);
+        
+        // Create a virtual field appropriate for this relationship type
+        const virtualField: DirectusField = {
+          collection: collectionName,
+          field: fieldName,
+          type: 'alias',
+          meta: {
+            collection: collectionName,
+            field: fieldName,
+            hidden: false,
+            interface: 'input',
+            system: false,
+            special: []
+          },
+          schema: {
+            name: fieldName,
+            table: collectionName,
+            data_type: 'alias',
+            default_value: null,
+            max_length: null,
+            numeric_precision: null,
+            numeric_scale: null,
+            is_nullable: true,
+            is_unique: false,
+            is_primary_key: false,
+            has_auto_increment: false,
+            foreign_key_table: null,
+            foreign_key_column: null
+          }
+        };
+        
+        // Set appropriate interface and special flags based on relationship type
+        switch (relationship.type) {
+          case RelationshipType.OneToMany:
+            virtualField.meta.interface = 'list-o2m';
+            virtualField.meta.special = ['o2m'];
+            break;
+          case RelationshipType.ManyToOne:
+            virtualField.meta.interface = 'many-to-one';
+            virtualField.meta.special = ['m2o'];
+            virtualField.schema.foreign_key_table = relationship.relatedCollection;
+            virtualField.schema.foreign_key_column = 'id';
+            break;
+          case RelationshipType.ManyToMany:
+            virtualField.meta.interface = 'list-m2m';
+            virtualField.meta.special = ['m2m'];
+            break;
+          case RelationshipType.OneToOne:
+            virtualField.meta.interface = 'many-to-one';
+            virtualField.meta.special = ['m2o'];
+            virtualField.schema.foreign_key_table = relationship.relatedCollection;
+            virtualField.schema.foreign_key_column = 'id';
+            break;
+        }
+        
+        // Add the virtual field to the schema
+        if (!this.snapshot.data.fields) {
+          this.snapshot.data.fields = [];
+        }
+        
+        this.snapshot.data.fields.push(virtualField);
+      }
+    }
+  }
+
+  /**
+   * Register all collections and determine their ID types
+   */
+  private registerCollections(): void {
+    if (!this.snapshot.data.collections) return;
+    
+    for (const collection of this.snapshot.data.collections) {
+      const typeName = this.getTypeNameForCollection(collection.collection);
+      this.collectionTypes.set(collection.collection, typeName);
+      
+      // Determine ID type for this collection
+      const idType = this.getIdTypeForCollection(collection.collection);
+      this.collectionIdTypes.set(collection.collection, idType);
+    }
+  }
+  
+  /**
+   * Determines if a collection is a singleton
+   */
+  private isSingleton(collectionName: string): boolean {
+    if (!this.snapshot.data.collections) return false;
+    
+    const collection = this.snapshot.data.collections.find(
+      c => c.collection === collectionName
+    );
+    
+    return collection?.meta.singleton === true;
+  }
+
+  /**
+   * Analyze relationships between collections
+   */
+  private analyzeRelationships(): void {
+    if (!this.snapshot.data.relations) return;
+    
+    // First pass: Identify and process M2M and M2A junction tables
+    const junctionTables = new Map<string, {
+      collection1: string;
+      collection2: string;
+      field1: string;
+      field2: string;
+    }>();
+    
+    for (const relation of this.snapshot.data.relations) {
+      if (!relation.related_collection) continue;
+      
+      // First collect information about junction tables
+      if (relation.meta.junction_field) {
+        const junctionTable = relation.collection;
+        
+        // If this is the first time we see this junction, initialize the entry
+        if (!junctionTables.has(junctionTable)) {
+          junctionTables.set(junctionTable, {
+            collection1: relation.related_collection,
+            field1: relation.field,
+            collection2: '',
+            field2: relation.meta.junction_field
+          });
+        } else {
+          // Update the existing junction table info with the second side
+          const junctionInfo = junctionTables.get(junctionTable)!;
+          junctionInfo.collection2 = relation.related_collection;
+          junctionInfo.field2 = relation.field;
+        }
+      }
+    }
+    
+    // Process all relations
+    for (const relation of this.snapshot.data.relations) {
+      if (!relation.related_collection) continue;
+      
+      // Determine relationship type
+      const relationshipType = this.determineRelationshipType(relation);
+      
+      // Get the type name for the related collection
+      const relatedTypeName = this.getTypeNameForCollection(relation.related_collection);
+      
+      // Create relationship entry for this collection if it doesn't exist
+      if (!this.relationships.has(relation.collection)) {
+        this.relationships.set(relation.collection, new Map());
+      }
+      
+      // Add the relationship
+      this.relationships.get(relation.collection)!.set(relation.field, {
+        type: relationshipType,
+        relatedCollection: relation.related_collection,
+        relatedType: relatedTypeName,
+        // For M2M relationships, store the junction field name
+        throughJunction: relation.meta.junction_field || undefined
+      });
+      
+      // For O2M relationships, we also need to track the relationship on the related collection
+      // This ensures the "many" side of the relationship gets correctly typed
+      if (relationshipType === RelationshipType.OneToMany && relation.meta.one_field) {
+        // Get the field name on the "many" side (related_collection)
+        const manyFieldName = relation.meta.one_field;
+        
+        console.log(`OneToMany relationship with one_field: ${relation.collection}.${relation.field} -> ${relation.related_collection}.${manyFieldName}`);
+        
+        // Create an entry for the related collection if it doesn't exist
+        if (!this.relationships.has(relation.related_collection)) {
+          this.relationships.set(relation.related_collection, new Map());
+        }
+        
+        // Add a relationship entry for the "many" side, pointing back to this collection
+        // The field on the "many" side is a ManyToOne relationship back to the "one" side
+        this.relationships.get(relation.related_collection)!.set(manyFieldName, {
+          type: RelationshipType.ManyToOne, // This is the key fix - was wrongly set to OneToMany
+          relatedCollection: relation.collection,
+          relatedType: this.getTypeNameForCollection(relation.collection)
+        });
+      }
+      
+      // Add reciprocal relationship for M2O relationships
+      // This creates the corresponding O2M relationship on the "one" side
+      if (relationshipType === RelationshipType.ManyToOne) {
+        // For M2O relationships, we need to check if there's a corresponding alias field
+        // in the related collection that defines the O2M relationship
+        const relatedCollection = relation.related_collection;
+        const sourceCollection = relation.collection;
+        
+        // First, check for alias fields in the schema that define this relationship
+        let aliasFieldFound = false;
+        let aliasFieldName = '';
+        
+        if (this.snapshot.data.fields) {
+          // Find alias O2M fields in the related collection
+          const aliasFields = this.snapshot.data.fields.filter(field => 
+            field.collection === relatedCollection && 
+            field.type === 'alias' && 
+            field.meta?.special && 
+            Array.isArray(field.meta.special) && 
+            field.meta.special.includes('o2m')
+          );
+          
+          console.log(`Checking for O2M alias fields in ${relatedCollection} related to ${sourceCollection}`);
+          
+          // First priority: Find alias fields with explicit related_collection
+          for (const aliasField of aliasFields) {
+            // Check if the field has a related_collection that explicitly points to our source collection
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const aliasRelatedCollection = (aliasField.meta as any).related_collection;
+            
+            if (aliasRelatedCollection === sourceCollection) {
+              aliasFieldFound = true;
+              aliasFieldName = aliasField.field;
+              console.log(`Found alias O2M field with explicit related_collection: ${relatedCollection}.${aliasFieldName} -> ${sourceCollection}`);
+              break;
+            }
+          }
+          
+          // Second priority: Look for fields that relate to our source collection by naming convention
+          if (!aliasFieldFound) {
+            // First, try to find O2M fields based on the field name
+            for (const aliasField of aliasFields) {
+              if (aliasField.field === sourceCollection) {
+                // Exact match with collection name
+                aliasFieldFound = true;
+                aliasFieldName = aliasField.field;
+                console.log(`Found alias O2M field with exact name match: ${relatedCollection}.${aliasFieldName} -> ${sourceCollection}`);
+                break;
+              }
+            }
+          }
+          
+          // Use any available O2M field if we can't find a specific match
+          if (!aliasFieldFound && aliasFields.length > 0) {
+            // If there's only one O2M field, use it
+            aliasFieldFound = true;
+            aliasFieldName = aliasFields[0].field;
+            console.log(`Using only available O2M field: ${relatedCollection}.${aliasFieldName} -> ${sourceCollection}`);
+          }
+        }
+        
+        // If we found a proper alias field, use that name
+        // Otherwise, generate a default name based on collection name
+        const oneFieldName = aliasFieldFound ? aliasFieldName : 
+          (sourceCollection.endsWith('s') ? sourceCollection : `${sourceCollection}s`);
+        
+        console.log(`Adding reciprocal O2M relationship: ${relatedCollection}.${oneFieldName} -> ${sourceCollection}.${relation.field}`);
+        console.log(`Detailed relationship: M2O relation from ${sourceCollection} to ${relatedCollection}, field: ${relation.field}`);
+        console.log(`Creating O2M in ${relatedCollection} with field: ${oneFieldName}`);
+        
+        if (sourceCollection === 'events_schedule_items' && relatedCollection === 'events') {
+          console.log(`IMPORTANT: events_schedule_items -> events relationship detected`);
+          console.log(`Final field name chosen: ${oneFieldName}`);
+        }
+        
+        // Create an entry for the related collection if it doesn't exist
+        if (!this.relationships.has(relatedCollection)) {
+          this.relationships.set(relatedCollection, new Map());
+        }
+        
+        // Only add if it doesn't already exist
+        if (!this.relationships.get(relatedCollection)!.has(oneFieldName)) {
+          // Add the O2M relationship
+          this.relationships.get(relatedCollection)!.set(oneFieldName, {
+            type: RelationshipType.OneToMany,
+            relatedCollection: sourceCollection,
+            relatedType: this.getTypeNameForCollection(sourceCollection)
+          });
+        }
+      }
+      
+      // Handle self-referential parent-child relationships specifically
+      if (relation.collection === relation.related_collection && relation.field === 'parent') {
+        console.log(`Processing self-referential parent relationship in ${relation.collection}`);
+        console.log(`Relation meta data for parent field:`, JSON.stringify(relation.meta, null, 2));
+        
+        // Default alias field for the child side
+        let aliasFieldName = 'children';
+        
+        // For discussions/comments, use 'replies' instead
+        if (relation.collection.toLowerCase().includes('discussion') || 
+            relation.collection.toLowerCase().includes('comment')) {
+          aliasFieldName = 'replies';
+        }
+        
+        // Use one_field from metadata if available
+        if (relation.meta.one_field) {
+          aliasFieldName = relation.meta.one_field;
+          console.log(`  Using alias field from metadata: ${aliasFieldName}`);
+        } else {
+          console.log(`  Using default alias field: ${aliasFieldName}`);
+        }
+        
+        // Set up the "children/replies" field
+        if (!this.relationships.has(relation.collection)) {
+          this.relationships.set(relation.collection, new Map());
+        }
+        
+        if (!this.relationships.get(relation.collection)!.has(aliasFieldName)) {
+          this.relationships.get(relation.collection)!.set(aliasFieldName, {
+            type: RelationshipType.OneToMany,
+            relatedCollection: relation.collection,
+            relatedType: this.getTypeNameForCollection(relation.collection)
+          });
+          console.log(`  Added ${aliasFieldName} field as OneToMany to ${relation.collection}`);
+        }
+      }
+      
+      // Handle M2M relationships with one_field (junction-accessed fields in main entities)
+      if (relationshipType === RelationshipType.ManyToMany && relation.meta.one_field) {
+        const junctionCollection = relation.collection;
+        const targetCollection = relation.related_collection;
+        const targetField = relation.meta.one_field;
+        
+        // Create an entry for the target collection
+        if (!this.relationships.has(targetCollection)) {
+          this.relationships.set(targetCollection, new Map());
+        }
+        
+        // Ensure the junction collection is registered
+        if (!this.collectionTypes.has(junctionCollection)) {
+          const junctionTypeName = this.getTypeNameForCollection(junctionCollection);
+          this.collectionTypes.set(junctionCollection, junctionTypeName);
+        }
+        
+        // Add a relationship entry for the target field pointing to the junction collection
+        this.relationships.get(targetCollection)!.set(targetField, {
+          type: RelationshipType.ManyToMany,
+          relatedCollection: junctionCollection,
+          relatedType: this.getTypeNameForCollection(junctionCollection)
+        });
+      }
+    }
+    
+    // Process M2A relationships separately (they're more complex)
+    this.processM2ARelationships();
+    
+    // Log relationship mapping for debugging
+    console.log("===== RELATIONSHIP MAPPING =====");
+    for (const [collection, fields] of this.relationships.entries()) {
+      console.log(`Collection: ${collection}`);
+      for (const [field, relation] of fields.entries()) {
+        console.log(`  ${field}: ${relation.type} -> ${relation.relatedCollection}`);
+      }
+    }
+    console.log("===============================");
+  }
+  
+  /**
+   * Process Many-to-Any (M2A) relationships
+   * M2A relationships involve a junction table with collection+item fields
+   */
+  private processM2ARelationships(): void {
+    if (!this.snapshot.data.relations) return;
+    
+    // Find potential M2A junction collections
+    const m2aJunctions = new Set<string>();
+    
+    for (const relation of this.snapshot.data.relations) {
+      // M2A junctions typically have a 'collection' field
+      if (relation.field === 'collection' && 
+          relation.collection.includes('_related_')) {
+        m2aJunctions.add(relation.collection);
+      }
+      
+      // Also check for item field in potential M2A junctions
+      if (relation.field === 'item' && 
+          relation.collection.includes('_related_') &&
+          !relation.related_collection) {
+        m2aJunctions.add(relation.collection);
+      }
+    }
+    
+    // For each M2A junction, find the relations that point to it
+    for (const junction of m2aJunctions) {
+      // Find the relation that points to this junction from a parent collection
+      for (const relation of this.snapshot.data.relations) {
+        if (relation.related_collection === junction && relation.meta.one_field) {
+          const targetCollection = relation.collection;
+          const targetField = relation.meta.one_field;
+          
+          // Create entry for parent collection if it doesn't exist
+          if (!this.relationships.has(targetCollection)) {
+            this.relationships.set(targetCollection, new Map());
+          }
+          
+          // Register relationship as ManyToAny
+          this.relationships.get(targetCollection)!.set(targetField, {
+            type: RelationshipType.ManyToAny,
+            relatedCollection: junction,
+            relatedType: this.getTypeNameForCollection(junction)
+          });
+        }
+      }
+    }
+  }
+
+  /**
+   * Determine the type of relationship from a relation definition
+   */
+  private determineRelationshipType(relation: DirectusRelation): RelationshipType {
+    // M2M relationships have a junction field
+    if (relation.meta.junction_field) {
+      return RelationshipType.ManyToMany;
+    }
+    
+    // M2A relationships have no one_collection but have an item field
+    if (relation.meta.one_collection === null && 
+        relation.field === 'item' && 
+        (relation.collection.includes('_related_') || 
+         (relation.meta.one_collection_field === 'collection'))) {
+      return RelationshipType.ManyToAny;
+    }
+    
+    // For self-referential relationships, use field name to determine type
+    if (relation.collection === relation.related_collection) {
+      console.log(`Self-referential relationship detected in ${relation.collection}: field=${relation.field}, meta=`, JSON.stringify(relation.meta));
+      
+      // Common field names that indicate M2O relationship (many children to one parent)
+      if (relation.field === 'parent') {
+        console.log(`  Identified as ManyToOne (parent field)`);
+        return RelationshipType.ManyToOne;
+      }
+      
+      // Common field names that indicate O2M relationship (one parent to many children)
+      if (relation.field === 'children' || relation.field === 'replies') {
+        console.log(`  Identified as OneToMany (children/replies field)`);
+        return RelationshipType.OneToMany;
+      }
+      
+      // Log for other self-referential fields
+      console.log(`  Unrecognized self-referential field pattern, defaulting to M2O`);
+    }
+    
+    // O2M relationships have one_collection matching this collection
+    if (relation.meta.one_collection === relation.collection) {
+      return RelationshipType.OneToMany;
+    }
+    
+    // Default to M2O for everything else
+    return RelationshipType.ManyToOne;
+  }
+
+  /**
+   * Generate interface definitions for all collections
+   */
+  private generateTypeDefinitions(): void {
+    if (!this.snapshot.data.collections) return;
+    
+    // First, ensure all system collections referenced in relations are processed
+    this.ensureSystemCollectionsFromRelations();
+    
+    // Process all collections in the schema
+    for (const collection of this.snapshot.data.collections) {
+      // Skip if already processed
+      if (this.processedCollections.has(collection.collection)) continue;
+      
+      // Mark as processed
+      this.processedCollections.add(collection.collection);
+      
+      // Check if this is a system collection
+      const isSystemCollection = collection.collection.startsWith("directus_");
+      
+      if (isSystemCollection) {
+        // Generate system collection interface with system fields
+        this.generateSystemCollectionInterface(collection);
+      } else {
+        // Generate regular collection interface
+        this.generateCollectionInterface(collection);
+      }
+    }
+    
+    // Generate the root schema interface
+    this.generateRootInterface();
+  }
+  
+  /**
+   * Ensure all system collections referenced in relations are processed
+   */
+  private ensureSystemCollectionsFromRelations(): void {
+    if (!this.snapshot.data.relations) return;
+    
+    // Create a set of all collection names that need to be processed
+    const collectionsToProcess = new Set<string>();
+    
+    // Extract all system collections referenced in relations
+    for (const relation of this.snapshot.data.relations) {
+      // Get both collection and related_collection
+      if (relation.collection?.startsWith('directus_')) {
+        collectionsToProcess.add(relation.collection);
+      }
+      
+      if (relation.related_collection?.startsWith('directus_')) {
+        collectionsToProcess.add(relation.related_collection);
+      }
+    }
+    
+    // Process system collections that need to be added
+    for (const collectionName of collectionsToProcess) {
+      // Skip if already processed
+      if (this.processedCollections.has(collectionName)) continue;
+      
+      // Create a minimal collection object
+      const collection = {
+        collection: collectionName,
+        meta: {
+          collection: collectionName,
+          singleton: false
+        }
+      };
+      
+      // Generate system collection interface
+      this.generateSystemCollectionInterface(collection as DirectusCollection);
+      
+      // Mark as processed
+      this.processedCollections.add(collectionName);
+    }
+  }
+
+  /**
+   * Generate interface for a system collection
+   * This approach always includes custom fields from the schema snapshot,
+   * and adds system fields only if includeSystemFields is true
+   */
+  private generateSystemCollectionInterface(collection: DirectusCollection): void {
+    const collectionName = collection.collection;
+    const typeName = this.getTypeNameForCollection(collectionName);
+    const idType = this.collectionIdTypes.get(collectionName) || "string";
+    
+    // Step 1: Get custom fields from schema snapshot (including M2M and other relationships)
+    let customFields = this.getCustomFieldsForCollection(collectionName);
+    
+    // Step 2: Enhance with relationship fields from relations data
+    // This is crucial for fields like as_staff that are defined in relations rather than fields
+    customFields = this.enhanceWithRelationFields(customFields, collectionName);
+    
+    // Step 3: Track what fields we have so far to avoid duplicates
+    const fieldNameSet = new Set(customFields.map(f => f.field));
+    let finalFields = [...customFields];
+    
+    // Step 4: If includeSystemFields is true, add all system fields
+    if (this.options.includeSystemFields) {
+      // Try to get system fields from the systemFieldDetector first
+      const systemFieldNames: string[] = [];
+      
+      if (this.systemFieldDetector) {
+        // Get system fields from the detector (from /fields endpoint)
+        const detectedSystemFields = this.systemFieldDetector.getSystemFields(collectionName);
+        systemFieldNames.push(...detectedSystemFields);
+      }
+      
+      // If no fields from detector, fall back to hardcoded fields
+      if (systemFieldNames.length === 0 && Object.prototype.hasOwnProperty.call(SYSTEM_FIELDS, collectionName)) {
+        const systemFieldsKey = collectionName as keyof typeof SYSTEM_FIELDS;
+        systemFieldNames.push(...SYSTEM_FIELDS[systemFieldsKey]);
+      }
+      
+      // Get all fields for the collection from the schema
+      const allFields = this.getAllFieldsForCollection(collectionName);
+      
+      // First add any system fields we know about but are missing from allFields
+      for (const systemFieldName of systemFieldNames) {
+        if (!fieldNameSet.has(systemFieldName)) {
+          // Try to find the field in allFields first
+          const existingField = allFields.find(field => field.field === systemFieldName);
+          
+          if (existingField) {
+            finalFields.push(existingField);
+          } else {
+            // Create a synthetic field with the appropriate type
+            const systemFieldType = this.getSystemFieldType(systemFieldName);
+            
+            const syntheticField: DirectusField = {
+              collection: collectionName,
+              field: systemFieldName,
+              type: systemFieldType === "'datetime'" ? "timestamp" : 
+                    systemFieldType === "'json'" ? "json" : 
+                    systemFieldType === "'csv'" ? "csv" : 
+                    systemFieldType,
+              meta: {
+                collection: collectionName,
+                field: systemFieldName,
+                hidden: false,
+                interface: "input",
+                special: systemFieldType === "'json'" ? ["json"] : 
+                       systemFieldType === "'csv'" ? ["csv"] : 
+                       systemFieldType === "'datetime'" ? ["date-created"] : 
+                       undefined,
+                system: true
+              },
+              schema: {
+                name: systemFieldName,
+                table: collectionName,
+                data_type: systemFieldType === "'datetime'" ? "timestamp" : 
+                           systemFieldType === "'json'" ? "json" : 
+                           systemFieldType === "'csv'" ? "csv" : 
+                           systemFieldType,
+                default_value: null,
+                max_length: null,
+                numeric_precision: null,
+                numeric_scale: null,
+                is_nullable: true,
+                is_unique: false,
+                is_primary_key: false,
+                has_auto_increment: false,
+                foreign_key_table: null,
+                foreign_key_column: null
+              }
+            };
+            
+            finalFields.push(syntheticField);
+          }
+          
+          fieldNameSet.add(systemFieldName);
+        }
+      }
+      
+      // Then add any remaining fields from allFields that aren't already included
+      for (const field of allFields) {
+        if (!fieldNameSet.has(field.field)) {
+          finalFields.push(field);
+          fieldNameSet.add(field.field);
+        }
+      }
+    }
+    
+    // Step 5: Always include the id field if it's not already present
+    if (!fieldNameSet.has('id')) {
+      // Create a synthetic id field
+      const idField: DirectusField = {
+        collection: collectionName,
+        field: 'id',
+        type: idType,
+        meta: {
+          collection: collectionName,
+          field: 'id',
+          hidden: false,
+          interface: 'input',
+          special: undefined,
+          system: true
+        },
+        schema: {
+          name: 'id',
+          table: collectionName,
+          data_type: idType,
+          default_value: null,
+          max_length: null,
+          numeric_precision: null,
+          numeric_scale: null,
+          is_nullable: false,
+          is_unique: true,
+          is_primary_key: true,
+          has_auto_increment: false,
+          foreign_key_table: null,
+          foreign_key_column: null
+        }
+      };
+      finalFields.push(idField);
+      fieldNameSet.add('id');
+    }
+    
+    // Make sure the finalFields are unique by field name
+    const seenFields = new Set<string>();
+    finalFields = finalFields.filter(field => {
+      if (seenFields.has(field.field)) {
+        return false;
+      }
+      seenFields.add(field.field);
+      return true;
+    });
+    
+    // Enhance fields with correct Directus SDK types
+    const enhancedFields = finalFields.map(field => {
+      const newField = { ...field };
+      
+      // Enhanced datetime field detection for system collection fields
+      // Check meta.special field attributes first
+      const hasDateTimeSpecial = field.meta && field.meta.special && (
+        Array.isArray(field.meta.special) ? 
+          field.meta.special.includes('date-created') || 
+          field.meta.special.includes('date-updated') ||
+          field.meta.special.includes('timestamp') ||
+          field.meta.special.includes('date') ||
+          field.meta.special.includes('time') :
+          field.meta.special === 'date-created' || 
+          field.meta.special === 'date-updated' ||
+          field.meta.special === 'timestamp' ||
+          field.meta.special === 'date' ||
+          field.meta.special === 'time'
+      );
+      
+      // Check if field type suggests date/time
+      const isDateTimeType = 
+        field.type === 'timestamp' ||
+        field.type === 'dateTime' ||
+        field.type === 'date' ||
+        field.type === 'time' ||
+        field.type === 'datetime';
+        
+      // Check database schema data_type
+      const hasDateTimeDataType = field.schema && field.schema.data_type && (
+        String(field.schema.data_type).toLowerCase().includes('time') ||
+        String(field.schema.data_type).toLowerCase().includes('date') ||
+        String(field.schema.data_type).toLowerCase().includes('timestamp') ||
+        String(field.schema.data_type).toLowerCase() === 'interval' ||
+        String(field.schema.data_type).toLowerCase() === 'year'
+      );
+      
+      // Check common field name patterns
+      const timeRelatedFieldNames = [
+        'date_created', 'date_updated', 'created_on', 'modified_on',
+        'day', 'date', 'time', 'datetime', 'timestamp',
+        'start', 'end', 'begin', 'finish',
+        'created', 'modified', 'updated',
+        'scheduled', 'published', 'expired',
+        'due', 'deadline'
+      ];
+      
+      const hasTimeRelatedName = timeRelatedFieldNames.some(name => 
+        field.field === name || 
+        field.field.startsWith(name + '_') || 
+        field.field.endsWith('_' + name)
+      );
+      
+      // Combine all checks to determine if this is a datetime field
+      const isDateTimeField = hasDateTimeSpecial || isDateTimeType || hasDateTimeDataType || hasTimeRelatedName;
+      
+      const isJsonField = 
+        field.field === 'metadata' || 
+        field.field === 'translations' || 
+        field.field === 'tags' ||
+        (field.meta.special && (
+          Array.isArray(field.meta.special) ? 
+            field.meta.special.includes('json') : 
+            field.meta.special === 'json'
+        )) ||
+        field.type === 'json';
+      
+      const isCsvField = 
+        (field.meta.special && (
+          Array.isArray(field.meta.special) ? 
+            field.meta.special.includes('csv') : 
+            field.meta.special === 'csv'
+        )) ||
+        field.type === 'csv';
+      
+      // Check if this is a relationship field (user_created, user_updated)
+      const isUserRelationField = 
+        field.field === 'user_created' || 
+        field.field === 'user_updated' ||
+        (field.meta.special && (
+          Array.isArray(field.meta.special) ? 
+            field.meta.special.includes('user-created') || 
+            field.meta.special.includes('user-updated') :
+            field.meta.special === 'user-created' || 
+            field.meta.special === 'user-updated'
+        ));
+      
+      // Check for status field
+      const isStatusField = field.field === 'status';
+      
+      // Modify the type for special Directus fields to use literal types
+      if (isDateTimeField) {
+        newField.type = "'datetime'";
+      } else if (isJsonField) {
+        newField.type = "'json'";
+      } else if (isCsvField) {
+        newField.type = "'csv'";
+      } else if (isUserRelationField) {
+        // For user relation fields, ensure they're properly typed
+        newField.type = 'string';
+        
+        // Add foreign key relationship info
+        if (!newField.schema.foreign_key_table) {
+          newField.schema.foreign_key_table = 'directus_users';
+          newField.schema.foreign_key_column = 'id';
+        }
+      } else if (isStatusField) {
+        // Status field is always a string
+        newField.type = "string";
+      }
+      
+      return newField;
+    });
+    
+    // Generate interface with all our fields
+    this.generateInterfaceWithFields(typeName, collectionName, enhancedFields);
+  }
+  
+  /**
+   * Enhance field list with relationship fields that may not be present in the schema
+   * but are defined in relations. This is especially important for custom fields
+   * in system collections when includeSystemFields=false.
+   * 
+   * This method works together with getCustomFieldsForCollection to ensure all
+   * custom fields are included in system collections by analyzing relations data.
+   */
+  private enhanceWithRelationFields(baseFields: DirectusField[], collectionName: string): DirectusField[] {
+    // For system collections, check for missing fields that are defined in relations
+    if (collectionName.startsWith("directus_")) {
+      const existingFieldNames = new Set(baseFields.map(f => f.field));
+      const syntheticFields: DirectusField[] = [];
+      
+      // Analyze schema relations to find fields for this system collection
+      if (this.snapshot.data.relations) {
+        for (const relation of this.snapshot.data.relations) {
+          // Look for relations where this collection is the related_collection
+          // and there's a one_field defined (typically for m2m relationships)
+          if (relation.related_collection === collectionName && 
+              relation.meta?.one_field && 
+              !existingFieldNames.has(relation.meta.one_field)) {
+            
+            // Create a synthetic field for this relationship
+            syntheticFields.push({
+              collection: collectionName,
+              field: relation.meta.one_field,
+              type: "alias",
+              meta: {
+                collection: collectionName,
+                field: relation.meta.one_field,
+                hidden: false,
+                interface: "list-m2m",
+                special: ["m2m"],
+                system: false,
+                junction_collection: relation.collection,
+                junction_field: relation.meta.junction_field
+              },
+              schema: {
+                name: relation.meta.one_field,
+                table: collectionName,
+                data_type: "alias",
+                default_value: null,
+                max_length: null,
+                numeric_precision: null,
+                numeric_scale: null,
+                is_nullable: true,
+                is_unique: false,
+                is_primary_key: false,
+                has_auto_increment: false,
+                foreign_key_table: null,
+                foreign_key_column: null
+              }
+            });
+            
+            existingFieldNames.add(relation.meta.one_field);
+          }
+          
+          // Check for many-to-one or one-to-one relations targeting this collection
+          if (relation.collection === collectionName && 
+              relation.related_collection &&
+              !relation.meta.one_field && // Not a one-to-many or many-to-many
+              !relation.meta.junction_field && // Not a junction
+              !existingFieldNames.has(relation.field)) {
+            
+            // Create a synthetic field for this relationship
+            syntheticFields.push({
+              collection: collectionName,
+              field: relation.field,
+              type: "alias",
+              meta: {
+                collection: collectionName,
+                field: relation.field,
+                hidden: false,
+                interface: "many-to-one",
+                special: ["m2o"],
+                system: false
+              },
+              schema: {
+                name: relation.field,
+                table: collectionName,
+                data_type: "alias",
+                default_value: null,
+                max_length: null,
+                numeric_precision: null,
+                numeric_scale: null,
+                is_nullable: true,
+                is_unique: false,
+                is_primary_key: false,
+                has_auto_increment: false,
+                foreign_key_table: relation.related_collection,
+                foreign_key_column: "id"
+              }
+            });
+            
+            existingFieldNames.add(relation.field);
+          }
+        }
+      }
+      
+      return [...baseFields, ...syntheticFields];
+    }
+    
+    // For non-system collections, just return the base fields
+    return baseFields;
+  }
+
+  /**
+   * Generate interface for a regular collection
+   */
+  private generateCollectionInterface(collection: DirectusCollection): void {
+    const collectionName = collection.collection;
+    const typeName = this.getTypeNameForCollection(collectionName);
+    
+    // Get all fields for this collection
+    let allFields = this.getAllFieldsForCollection(collectionName);
+    
+    // Special debug for events collection
+    if (collectionName === 'events') {
+      console.log(`\n=== Generating interface for events collection ===`);
+      
+      // Log relationships for events
+      if (this.relationships.has(collectionName)) {
+        console.log(`Relationships for events:`);
+        for (const [field, relation] of this.relationships.get(collectionName)!.entries()) {
+          console.log(`  ${field}: ${relation.type} -> ${relation.relatedCollection}`);
+        }
+      } else {
+        console.log(`No relationships found for events`);
+      }
+      
+      // Check if scheduled_items is in the fields
+      const hasScheduledItems = allFields.some(f => f.field === 'scheduled_items');
+      console.log(`Has scheduled_items field: ${hasScheduledItems}`);
+      
+      // Look at all virtual fields
+      const virtualFields = allFields.filter(f => f.type === 'alias');
+      console.log(`Virtual fields in events:`, virtualFields.map(f => f.field).join(', '));
+    }
+    
+    // Special handling for self-referential relationships in discussions
+    if (collectionName === 'discussions') {
+      console.log(`Processing discussions collection for replies field`);
+      
+      // Check if we have a relationship for 'replies' but no field for it
+      const hasRepliesRelationship = this.relationships.get(collectionName)?.has('replies');
+      const hasRepliesField = allFields.some(field => field.field === 'replies');
+      
+      console.log(`Has 'replies' relationship: ${hasRepliesRelationship}, Has 'replies' field: ${hasRepliesField}`);
+      console.log(`Fields in discussions:`, allFields.map(f => f.field).join(', '));
+      
+      if (hasRepliesRelationship && !hasRepliesField) {
+        console.log('Adding special replies field to discussions');
+        // Create a synthetic field for the replies relationship
+        const repliesField: DirectusField = {
+          collection: collectionName,
+          field: 'replies',
+          type: 'alias',
+          meta: {
+            collection: collectionName,
+            field: 'replies',
+            hidden: false,
+            interface: 'list-o2m',
+            special: ['o2m'],
+            system: false
+          },
+          schema: {
+            name: 'replies',
+            table: collectionName,
+            data_type: 'alias',
+            default_value: null,
+            max_length: null,
+            numeric_precision: null,
+            numeric_scale: null,
+            is_nullable: true,
+            is_unique: false,
+            is_primary_key: false,
+            has_auto_increment: false,
+            foreign_key_table: collectionName,
+            foreign_key_column: 'id'
+          }
+        };
+        
+        // Add the field to the collection's fields
+        allFields = [...allFields, repliesField];
+      }
+    }
+    
+    // Ensure system fields like date_created have the correct Directus SDK type literals
+    const enhancedFields = allFields.map(field => {
+      // Special debug logging for EventsScheduleItem time fields
+      if (field.collection === 'events_schedule_items' && (field.field === 'start' || field.field === 'end' || field.field === 'day')) {
+        console.log(`DEBUG: Processing field ${field.collection}.${field.field}`);
+        console.log(`  Field type: ${field.type}`);
+        console.log(`  Schema data_type: ${field.schema?.data_type}`);
+        console.log(`  Special: ${field.meta?.special ? JSON.stringify(field.meta.special) : 'undefined'}`);
+      }
+      
+      const newField = { ...field };
+      
+      // Enhanced datetime field detection for regular collection fields
+      // Check meta.special field attributes first
+      const hasDateTimeSpecial = field.meta && field.meta.special && (
+        Array.isArray(field.meta.special) ? 
+          field.meta.special.includes('date-created') || 
+          field.meta.special.includes('date-updated') ||
+          field.meta.special.includes('timestamp') ||
+          field.meta.special.includes('date') ||
+          field.meta.special.includes('time') :
+          field.meta.special === 'date-created' || 
+          field.meta.special === 'date-updated' ||
+          field.meta.special === 'timestamp' ||
+          field.meta.special === 'date' ||
+          field.meta.special === 'time'
+      );
+      
+      // Check if field type suggests date/time
+      const isDateTimeType = 
+        field.type === 'timestamp' ||
+        field.type === 'dateTime' ||
+        field.type === 'date' ||
+        field.type === 'time' ||
+        field.type === 'datetime';
+        
+      // Check database schema data_type
+      const hasDateTimeDataType = field.schema && field.schema.data_type && (
+        String(field.schema.data_type).toLowerCase().includes('time') ||
+        String(field.schema.data_type).toLowerCase().includes('date') ||
+        String(field.schema.data_type).toLowerCase().includes('timestamp') ||
+        String(field.schema.data_type).toLowerCase() === 'interval' ||
+        String(field.schema.data_type).toLowerCase() === 'year'
+      );
+      
+      // Check common field name patterns
+      const timeRelatedFieldNames = [
+        'date_created', 'date_updated', 'created_on', 'modified_on',
+        'day', 'date', 'time', 'datetime', 'timestamp',
+        'start', 'end', 'begin', 'finish',
+        'created', 'modified', 'updated',
+        'scheduled', 'published', 'expired',
+        'due', 'deadline'
+      ];
+      
+      const hasTimeRelatedName = timeRelatedFieldNames.some(name => 
+        field.field === name || 
+        field.field.startsWith(name + '_') || 
+        field.field.endsWith('_' + name)
+      );
+      
+      // Combine all checks to determine if this is a datetime field
+      const isDateTimeField = hasDateTimeSpecial || isDateTimeType || hasDateTimeDataType || hasTimeRelatedName;
+      
+      const isJsonField = 
+        field.field === 'metadata' || 
+        field.field === 'translations' || 
+        field.field === 'tags' ||
+        (field.meta.special && (
+          Array.isArray(field.meta.special) ? 
+            field.meta.special.includes('json') : 
+            field.meta.special === 'json'
+        )) ||
+        field.type === 'json';
+      
+      const isCsvField = 
+        (field.meta.special && (
+          Array.isArray(field.meta.special) ? 
+            field.meta.special.includes('csv') : 
+            field.meta.special === 'csv'
+        )) ||
+        field.type === 'csv';
+      
+      // Check if this is a relationship field (user_created, user_updated)
+      const isUserRelationField = 
+        field.field === 'user_created' || 
+        field.field === 'user_updated' ||
+        (field.meta.special && (
+          Array.isArray(field.meta.special) ? 
+            field.meta.special.includes('user-created') || 
+            field.meta.special.includes('user-updated') :
+            field.meta.special === 'user-created' || 
+            field.meta.special === 'user-updated'
+        ));
+      
+      // Check for status field
+      const isStatusField = field.field === 'status';
+      
+      // Modify the type for special Directus fields to use literal types
+      if (isDateTimeField) {
+        newField.type = "'datetime'";
+      } else if (isJsonField) {
+        newField.type = "'json'";
+      } else if (isCsvField) {
+        newField.type = "'csv'";
+      } else if (isUserRelationField) {
+        // For user relation fields, ensure they're properly typed
+        newField.type = 'string';
+        
+        // Add foreign key relationship info
+        if (!newField.schema.foreign_key_table) {
+          newField.schema.foreign_key_table = 'directus_users';
+          newField.schema.foreign_key_column = 'id';
+        }
+      } else if (isStatusField) {
+        // Status field is always a string
+        newField.type = "string";
+      }
+      
+      return newField;
+    });
+    
+    // Generate interface with the enhanced fields
+    this.generateInterfaceWithFields(typeName, collectionName, enhancedFields);
+  }
+
+  /**
+   * Generate an interface with the given fields
+   */
+  private generateInterfaceWithFields(
+    typeName: string, 
+    collectionName: string, 
+    fields: DirectusField[]
+  ): void {
+    // Special logging for discussions
+    if (collectionName === 'discussions') {
+      console.log(`Generating interface for discussions with ${fields.length} fields`);
+      console.log(`Field names in discussions interface:`, fields.map(f => f.field).join(', '));
+    }
+    
+    // Debug logging for EventsScheduleItem fields 
+    if (collectionName === 'events_schedule_items') {
+      console.log(`Generating interface for EventsScheduleItem with ${fields.length} fields`);
+      for (const field of fields) {
+        if (field.field === 'start' || field.field === 'end' || field.field === 'day') {
+          console.log(`Field ${field.field} - Original type: ${field.type}`);
+        }
+      }
+    }
+    
+    const lines: string[] = [
+      `export ${this.options.useTypes ? "type" : "interface"} ${typeName} ${this.options.useTypes ? "= " : ""}{`
+    ];
+    
+    // Start with ID field - all collections have an ID
+    const idType = this.collectionIdTypes.get(collectionName) || "string";
+    lines.push(`  id: ${idType};`);
+    
+    // Special handling for junction collections removed - we now include all fields
+    // regardless of their hidden status or collection type
+    
+    // Process each field
+    for (const field of fields) {
+      // Special logging for discussions and the replies field
+      if (collectionName === 'discussions' && field.field === 'replies') {
+        console.log('Processing replies field in discussions:', field);
+      }
+      
+      // Skip the id field as we already added it
+      if (field.field === "id") continue;
+      
+      // For alias fields with o2m/m2m/m2o special, allow no schema
+      const isSpecialRelationshipField = 
+        field.type === 'alias' && 
+        field.meta && field.meta.special && 
+        Array.isArray(field.meta.special) && 
+        (field.meta.special.includes('o2m') || 
+         field.meta.special.includes('m2m') || 
+         field.meta.special.includes('m2o'));
+      
+      // Skip if field doesn't have a schema AND isn't a special relationship field
+      if (!field.schema && !isSpecialRelationshipField) {
+        if (collectionName === 'discussions' && field.field === 'replies') {
+          console.log('Would have skipped replies field, but it has special o2m');
+        } else {
+          continue;
+        }
+      }
+      
+      // Skip UI presentation components and internal fields that aren't relevant for API usage
+      const isUIComponent = 
+        // Fields with type "alias" and special includes "no-data" (but not m2m)
+        (field.type === "alias" && 
+         field.meta && field.meta.special && 
+         field.meta.special.includes("no-data") && 
+         !field.meta.special.includes("m2m")) ||
+        // Fields with presentation or group interfaces
+        (field.meta && field.meta.interface && 
+         (field.meta.interface.startsWith("presentation-") || 
+          field.meta.interface.startsWith("group-")));
+      
+      if (isUIComponent) {
+        if (collectionName === 'discussions' && field.field === 'replies') {
+          console.log('SKIPPING replies field because it is a UI component');
+        }
+        continue;
+      }
+      
+      // Don't skip any fields based on hidden status
+      // We need all fields for the types, including hidden system fields like
+      // date_created, date_updated, user_created, user_updated, status, etc.
+      
+      // Add JSDoc for field notes if enabled
+      if (this.options.addTypedocNotes && field.meta.note) {
+        lines.push(`  /** ${field.meta.note} */`);
+      }
+      
+      // Generate field definition
+      let fieldType = this.getTypeForField(field);
+      
+      // Special logging for scheduled_items field
+      if (field.collection === 'events' && field.field === 'scheduled_items') {
+        console.log(`\n==== Processing events.scheduled_items field ====`);
+        console.log(`  Original assigned type: ${fieldType}`);
+        console.log(`  Field data:`, JSON.stringify(field, null, 2));
+      }
+      
+      // Fix for the o2m relationship for ticket.prices
+      if (field.collection === 'tickets' && field.field === 'prices') {
+        console.log(`\n==== Processing tickets.prices field ====`);
+        console.log(`  Original assigned type: ${fieldType}`);
+        
+        // If there is a ticket_prices collection, use it
+        const ticketPricesCollection = this.snapshot.data.collections?.find(c => c.collection === 'ticket_prices');
+        
+        if (ticketPricesCollection) {
+          // Override the type to correctly point to TicketPrice
+          const ticketPriceType = this.getTypeNameForCollection('ticket_prices');
+          const ticketPriceIdType = this.getIdTypeForCollection('ticket_prices');
+          
+          fieldType = `${ticketPriceIdType}[] | ${ticketPriceType}[]`;
+          console.log(`  Fixed fieldType to: ${fieldType}`);
+        } else {
+          // Check if we can find the relationship in relations data
+          const relationship = this.getRelationshipForField('tickets', 'prices');
+          console.log(`  Relationship for tickets.prices:`, relationship);
+          
+          // Try to check all relations for a better match
+          if (this.snapshot.data.relations) {
+            for (const relation of this.snapshot.data.relations) {
+              if (relation.meta && relation.meta.one_field === 'prices' && 
+                  relation.related_collection === 'tickets') {
+                
+                // Use the collection that has this relation
+                const correctCollection = relation.collection;
+                const correctType = this.getTypeNameForCollection(correctCollection);
+                const correctIdType = this.getIdTypeForCollection(correctCollection);
+                
+                fieldType = `${correctIdType}[] | ${correctType}[]`;
+                console.log(`  Fixed fieldType from relation to: ${fieldType}`);
+                break;
+              }
+            }
+          }
+        }
+      }
+      
+      // Extra check to properly type time and date fields
+      if (field.type === 'time' || field.type === 'date' || 
+          (field.schema && field.schema.data_type && 
+           (String(field.schema.data_type).includes('time') || 
+            String(field.schema.data_type).includes('date')))) {
+        // Ensure all time and date fields use 'datetime' literal type
+        fieldType = "'datetime'";
+        console.log(`Ensuring ${field.collection}.${field.field} (${field.type}) has datetime type`);
+      }
+
+      // Special handling for specific fields in DirectusUser
+      if (collectionName === 'directus_users') {
+        if (field.field === 'avatar') {
+          fieldType = `string | DirectusFile`;
+        } else if (field.field === 'role') {
+          fieldType = `string | DirectusRole`;
+          
+          // Ensure we have a DirectusRole interface
+          if (!this.typeDefinitions.has('DirectusRole')) {
+            const roleLines = [
+              `export ${this.options.useTypes ? "type" : "interface"} DirectusRole ${this.options.useTypes ? "= " : ""}{`,
+              `  id: string;`,
+              `  name: string;`,
+              `  icon: string;`,
+              `  description: string;`,
+              `  ip_access: string[];`,
+              `  enforce_tfa: boolean;`,
+              `  admin_access: boolean;`,
+              `  app_access: boolean;`,
+              `}`
+            ];
+            this.addTypeDefinition('DirectusRole', roleLines);
+          }
+        }
+      }
+      
+      // Check if field should be optional (with safety check)
+      const isOptional = !this.options.makeRequired && field.schema && field.schema.is_nullable;
+      lines.push(`  ${field.field}${isOptional ? "?" : ""}: ${fieldType};`);
+    }
+    
+    lines.push(`}`);
+    
+    // Add the type definition
+    this.addTypeDefinition(typeName, lines);
+  }
+
+  /**
+   * Get the TypeScript type for a field
+   */
+  private getTypeForField(field: DirectusField): string {
+    // Handle alias fields with o2m special
+    if (field.type === 'alias' && field.meta && field.meta.special && 
+        Array.isArray(field.meta.special) && field.meta.special.includes('o2m')) {
+      
+      console.log(`Special handling for o2m alias field: ${field.collection}.${field.field}`);
+      
+      // Check if the field name matches a collection name (eg. event_registrations should link to EventRegistration)
+      // This handles both exact matches and singular/plural forms
+      const fieldName = field.field;
+      
+      // Try exact match first
+      let possibleCollectionName = fieldName;
+      let collectionsExist = (this.snapshot.data.collections || [])
+        .some(c => c.collection === possibleCollectionName);
+      
+      // If no match, check if adding 's' at the end matches (e.g., 'tickets' -> 'ticket')
+      // This is a simple check for common English pluralization patterns
+      if (!collectionsExist && fieldName.endsWith('s')) {
+        const singularName = fieldName.slice(0, -1); // Remove trailing 's'
+        const singularExists = (this.snapshot.data.collections || [])
+          .some(c => c.collection === singularName);
+        
+        if (singularExists) {
+          possibleCollectionName = singularName;
+          collectionsExist = true;
+        }
+      }
+      
+      console.log(`  Check if field "${field.field}" maps to collection: ${collectionsExist}`);
+      
+      if (collectionsExist) {
+        // Field name matches a collection - use that collection's type
+        const targetTypeName = this.getTypeNameForCollection(possibleCollectionName);
+        const targetIdType = this.getIdTypeForCollection(possibleCollectionName);
+        console.log(`  Field name matches collection! Using type: ${targetTypeName}`);
+        return `${targetIdType}[] | ${targetTypeName}[]`;
+      }
+      
+      // For self-referential relationships
+      if (field.meta.collection === field.collection) {
+        return `number[] | ${this.getTypeNameForCollection(field.collection)}[]`;
+      }
+      
+      // For other o2m relationships - default to self-referential if no related_collection
+      // Note: TypeScript isn't aware of the related_collection property
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const relatedCollection = (field.meta as any).related_collection || field.collection;
+      return `number[] | ${this.getTypeNameForCollection(relatedCollection)}[]`;
+    }
+    
+    // Check for relationships first
+    const relationship = this.getRelationshipForField(field.collection, field.field);
+    if (relationship) {
+      return this.getTypeForRelationship(relationship, field);
+    }
+    
+    // Handle special field types (with safety check)
+    if (field.meta && field.meta.special) {
+      // Handle M2O fields marked with special "m2o"
+      if (Array.isArray(field.meta.special) && field.meta.special.includes("m2o")) {
+        // For many-to-one relationships, we need a reference to the related collection
+        // Try to find the relation data to get the related collection
+        if (this.snapshot.data.relations) {
+          for (const relation of this.snapshot.data.relations) {
+            if (relation.collection === field.collection && 
+                relation.field === field.field && 
+                relation.related_collection) {
+              // Found the related collection
+              const relatedCollection = relation.related_collection;
+              const relatedTypeName = this.getTypeNameForCollection(relatedCollection);
+              const relatedIdType = this.getIdTypeForCollection(relatedCollection);
+              
+              // Check if nullable with safety checks
+              const isNullable = field.schema && field.schema.is_nullable;
+              if (isNullable) {
+                return `${relatedIdType} | ${relatedTypeName} | null`;
+              } else {
+                return `${relatedIdType} | ${relatedTypeName}`;
+              }
+            }
+          }
+        }
+        
+        // If we couldn't find the relation details, return a generic type
+        // Check if nullable with safety checks
+        const isNullable = field.schema && field.schema.is_nullable;
+        return isNullable ? "string | null" : "string";
+      }
+      
+      // Handle O2M fields marked with special "o2m"
+      if (Array.isArray(field.meta.special) && field.meta.special.includes("o2m")) {
+        // First check if this field is in our relationships map
+        const relationship = this.getRelationshipForField(field.collection, field.field);
+        if (relationship && relationship.type === RelationshipType.OneToMany) {
+          const relatedCollection = relationship.relatedCollection;
+          const relatedTypeName = relationship.relatedType;
+          const relatedIdType = this.getIdTypeForCollection(relatedCollection);
+          return `${relatedIdType}[] | ${relatedTypeName}[]`;
+        }
+        
+        // If not found in relationships map, try multiple strategies to find the correct related collection
+        
+        // STRATEGY 1: Try to find it in relations data
+        let relatedCollection = '';
+        if (this.snapshot.data.relations) {
+          for (const relation of this.snapshot.data.relations) {
+            if (relation.collection === field.collection && 
+                relation.field === field.field && 
+                relation.meta.one_collection === field.collection) {
+              // Found the related collection
+              relatedCollection = relation.related_collection;
+              if (relatedCollection) {
+                console.log(`Found related collection in O2M relation: ${field.collection}.${field.field} -> ${relatedCollection}`);
+                break;
+              }
+            }
+          }
+          
+          // STRATEGY 2: Also look for fields on the other end of the relationship
+          // (the field on the "many" side that points back to this collection)
+          if (!relatedCollection) {
+            for (const relation of this.snapshot.data.relations) {
+              if (relation.related_collection === field.collection && 
+                  relation.meta.one_field === field.field) {
+                // Found the related collection (this is the "many" side collection)
+                relatedCollection = relation.collection;
+                console.log(`Found related collection from other end of relation: ${field.collection}.${field.field} -> ${relatedCollection}`);
+                break;
+              }
+            }
+          }
+        }
+        
+        // STRATEGY 3: Try pattern matching on all collections
+        if (!relatedCollection) {
+          const fieldName = field.field;
+          const allCollections = this.snapshot.data.collections?.map(c => c.collection) || [];
+          
+          // Exact match - field name directly matches collection name
+          if (allCollections.includes(fieldName)) {
+            relatedCollection = fieldName;
+            console.log(`Field name directly matches collection: ${field.collection}.${fieldName} -> ${relatedCollection}`);
+          }
+          // Check for singular form (field "tickets" -> collection "ticket")
+          else if (fieldName.endsWith('s') && allCollections.includes(fieldName.slice(0, -1))) {
+            relatedCollection = fieldName.slice(0, -1);
+            console.log(`Field name plural form matches collection: ${field.collection}.${fieldName} -> ${relatedCollection}`);
+          }
+          // Check for parent collection + field (field "prices" in "tickets" -> collection "ticket_prices")
+          else if (allCollections.includes(`${field.collection.replace(/s$/, '')}_${fieldName}`)) {
+            relatedCollection = `${field.collection.replace(/s$/, '')}_${fieldName}`;
+            console.log(`Found collection with parent prefix: ${field.collection}.${fieldName} -> ${relatedCollection}`);
+          }
+          // Check for any prefix (field "prices" -> collection "*_prices")
+          else {
+            const prefixMatches = allCollections.filter(c => c.endsWith(`_${fieldName}`));
+            if (prefixMatches.length === 1) {
+              relatedCollection = prefixMatches[0];
+              console.log(`Found collection with prefix pattern: ${field.collection}.${fieldName} -> ${relatedCollection}`);
+            }
+          }
+          
+          // If we still don't have a match, check for the reverse pattern
+          if (!relatedCollection) {
+            // Check for related collections that have a field matching our collection
+            // For example: pre_event_surveys.ticket -> event_registrations
+            for (const potentialCollection of allCollections) {
+              // Skip self-references
+              if (potentialCollection === field.collection) continue;
+              
+              // Look for fields in potential collection that point back to us
+              const collectionFields = this.getAllFieldsForCollection(potentialCollection);
+              const backReferenceField = collectionFields.find(f => 
+                f.field === field.collection.replace(/s$/, '') || 
+                f.field === field.collection
+              );
+              
+              if (backReferenceField) {
+                relatedCollection = potentialCollection;
+                console.log(`Found collection with back-reference: ${field.collection}.${fieldName} -> ${relatedCollection}`);
+                break;
+              }
+            }
+          }
+        }
+        
+        // If we've identified a related collection through any method, use it
+        if (relatedCollection) {
+          const relatedTypeName = this.getTypeNameForCollection(relatedCollection);
+          const relatedIdType = this.getIdTypeForCollection(relatedCollection);
+          return `${relatedIdType}[] | ${relatedTypeName}[]`;
+        }
+        
+        // If we couldn't find the relation details, return a generic array type
+        console.log(`WARNING: Could not determine related collection for ${field.collection}.${field.field}`);
+        return "string[]";
+      }
+      
+      // Handle M2M fields marked with special "m2m"
+      if (Array.isArray(field.meta.special) && field.meta.special.includes("m2m")) {
+        // First, check if the field has junction information from enhanceWithRelationFields
+        if (field.meta.junction_collection && typeof field.meta.junction_collection === 'string') {
+          const junctionTypeName = this.getTypeNameForCollection(field.meta.junction_collection as string);
+          const relatedIdType = this.getIdTypeForCollection(field.meta.junction_collection as string);
+          return `${relatedIdType}[] | ${junctionTypeName}[]`;
+        }
+        
+        // Next try to find the junction collection in relations
+        if (this.snapshot.data.relations) {
+          // Strategy 1: Find relations where this is the related collection's one_field
+          for (const relation of this.snapshot.data.relations) {
+            if (relation.related_collection === field.collection && 
+                relation.meta.one_field === field.field) {
+              // Found the junction table
+              const junctionTable = relation.collection;
+              const junctionTypeName = this.getTypeNameForCollection(junctionTable);
+              const junctionIdType = this.getIdTypeForCollection(junctionTable);
+              return `${junctionIdType}[] | ${junctionTypeName}[]`;
+            }
+          }
+          
+          // Strategy 2: For as_staff and similar fields, look at all relations
+          // to find the junction table
+          if (field.field.startsWith("as_")) {
+            // Extract the base name (e.g., "staff" from "as_staff")
+            const baseName = field.field.substring(3);
+            
+            // Look for junction tables related to this pattern
+            for (const relation of this.snapshot.data.relations) {
+              // Look for junction tables with names that match the pattern
+              // Common pattern: "event_staff" for "as_staff"
+              const relationTable = relation.collection.toLowerCase();
+              if (relationTable.includes(baseName.toLowerCase())) {
+                // Check if this is a junction table (has junction_field)
+                if (relation.meta.junction_field) {
+                  const junctionTypeName = this.getTypeNameForCollection(relation.collection);
+                  const junctionIdType = this.getIdTypeForCollection(relation.collection);
+                  return `${junctionIdType}[] | ${junctionTypeName}[]`;
+                }
+              }
+            }
+          }
+        }
+        
+        // If no junction found in relations, try to infer from field name patterns
+        const fieldName = field.field;
+        let relationshipName = fieldName;
+        if (fieldName.startsWith("as_")) {
+          relationshipName = fieldName.substring(3);
+        }
+        
+        // Look for collections that might be junction tables
+        const collectionNames = this.snapshot.data.collections?.map(c => c.collection) || [];
+        const possibleJunctions = collectionNames.filter(name => {
+          // Common patterns: event_staff, staff_events, etc.
+          const lowerName = name.toLowerCase();
+          const lowerRelationship = relationshipName.toLowerCase();
+          const lowerCollectionBase = field.collection.replace('directus_', '').toLowerCase();
+          
+          return lowerName.includes(lowerRelationship) || 
+                 lowerName.includes(lowerCollectionBase) ||
+                 // For "as_staff" the junction might be "event_staff"
+                 (fieldName.startsWith("as_") && lowerName.includes(`event_${lowerRelationship}`));
+        });
+        
+        if (possibleJunctions.length > 0) {
+          const junctionTable = possibleJunctions[0];
+          const junctionTypeName = this.getTypeNameForCollection(junctionTable);
+          const junctionIdType = this.getIdTypeForCollection(junctionTable);
+          return `${junctionIdType}[] | ${junctionTypeName}[]`;
+        }
+        
+        // Default to string array if we can't determine the junction
+        return "string[]";
+      }
+      
+      // Handle JSON fields
+      if ((Array.isArray(field.meta.special) && field.meta.special.includes("json")) || field.type === "json") {
+        return "'json'";
+      }
+      
+      // Handle CSV fields
+      if (Array.isArray(field.meta.special) && field.meta.special.includes("csv")) {
+        return "'csv'";
+      }
+      
+      // Handle date/time fields - enhanced detection
+      // First check special flags
+      if (Array.isArray(field.meta.special) && (
+          field.meta.special.includes("date-created") || 
+          field.meta.special.includes("date-updated") ||
+          field.meta.special.includes("timestamp") ||
+          field.meta.special.includes("date")
+        )) {
+        return "'datetime'";
+      }
+      
+      // Check field type
+      if (field.type === "timestamp" ||
+          field.type === "dateTime" ||
+          field.type === "date" ||
+          field.type === "time" ||
+          field.type === "datetime") {
+        return "'datetime'";
+      }
+      
+      // Enhanced database schema data type detection for time/date fields
+      if (field.schema && field.schema.data_type) {
+        const dataType = String(field.schema.data_type).toLowerCase();
+        
+        // Comprehensive datetime field detection based on SQL data types
+        // Handle all variations of time/date fields in different database systems
+        if (
+          // Common SQL time/date data types
+          dataType.includes('time') ||           // time, timestamp, timestamptz, time without time zone, etc.
+          dataType.includes('date') ||           // date, datetime, etc.
+          dataType.includes('timestamp') ||      // timestamp, timestamptz
+          
+          // PostgreSQL specific types
+          dataType === 'interval' ||             // PostgreSQL interval
+          
+          // MySQL/MariaDB specific types
+          dataType === 'year' ||                 // MySQL YEAR type
+          
+          // Common column names that typically store time values
+          /^(start|end|begins?|finish|due|deadline)/.test(field.field)
+        ) {
+          console.log(`Detected time/date field from schema data_type "${dataType}": ${field.collection}.${field.field}`);
+          return "'datetime'";
+        }
+      }
+      
+      // Check field name patterns that commonly indicate datetime values
+      // Doing this separately from schema.data_type check to handle cases where schema info might be incomplete
+      const timeRelatedFieldNames = [
+        'day', 'date', 'time', 'datetime', 'timestamp',
+        'start', 'end', 'begin', 'finish',
+        'created', 'modified', 'updated',
+        'scheduled', 'published', 'expired',
+        'due', 'deadline'
+      ];
+      
+      // Check if the field name exactly matches or starts with one of these time-related terms
+      if (timeRelatedFieldNames.some(name => 
+          field.field === name || 
+          field.field.startsWith(name + '_') || 
+          field.field.endsWith('_' + name))) {
+        
+        console.log(`Detected time/date field from field name pattern: ${field.collection}.${field.field}`);
+        return "'datetime'";
+      }
+      
+      // Special handling for EventsScheduleItem time fields with PostgreSQL-specific types
+      if (field.collection === 'events_schedule_items') {
+        console.log(`EventsScheduleItem field: ${field.field}, type: ${field.type}, schema.data_type: ${field.schema?.data_type || 'undefined'}`);
+        
+        // Override the field types for day, start, and end to ensure they're datetime
+        if (field.field === 'day' || field.field === 'start' || field.field === 'end') {
+          console.log(`Forcing datetime type for EventsScheduleItem.${field.field}`);
+          return "'datetime'";
+        }
+      }
+    }
+    
+    // Map Directus types to TypeScript types
+    switch (field.type) {
+      case "string":
+      case "text":
+      case "hash":
+      case "uuid":
+        return "string";
+      case "integer":
+      case "bigInteger":
+      case "float":
+      case "decimal":
+      case "number":
+        return "number";
+      case "boolean":
+        return "boolean";
+      case "json":
+        return "'json'";
+      case "csv":
+        return "'csv'";
+      case "dateTime":
+      case "date":
+      case "time":  // Make sure "time" type is correctly mapped to 'datetime'
+        console.log(`===== Found 'time' type field: ${field.collection}.${field.field} =====`);
+        console.log(`Full field:`, JSON.stringify(field, null, 2));
+        return "'datetime'";
+      case "timestamp":
+        console.log(`Mapped field ${field.collection}.${field.field} of type ${field.type} to 'datetime'`);
+        return "'datetime'";
+      default:
+        // Default to string for unknown types
+        return "string";
+    }
+  }
+
+  /**
+   * Get the type for a relationship field
+   */
+  private getTypeForRelationship(
+    relationship: { 
+      type: RelationshipType; 
+      relatedCollection: string;
+      relatedType: string;
+    },
+    field: DirectusField
+  ): string {
+    // Detect collection names from field names for better relationship typing
+    // For example, event_registrations in events should point to EventRegistration type
+    const fieldName = field.field;
+    
+    // For O2M relationships, we need to ensure the related collection is correctly identified
+    if (relationship.type === RelationshipType.OneToMany) {
+      console.log(`Processing O2M relationship: ${field.collection}.${fieldName} -> ${relationship.relatedCollection}`);
+      
+      // Get all available collections for pattern matching
+      const allCollections = this.snapshot.data.collections?.map(c => c.collection) || [];
+      let betterRelatedCollection = '';
+      
+      // APPROACH 1: Use relations data to find the correct related collection
+      if (this.snapshot.data.relations) {
+        // Look for relations that have this field as one_field
+        // This will find cases like "tickets.prices" pointing to "ticket_prices"
+        for (const relation of this.snapshot.data.relations) {
+          // Check if this relation's one_field matches our field
+          if (relation.meta && relation.meta.one_field === fieldName && 
+              relation.related_collection === field.collection) {
+            
+            // This relation defines the correct target collection
+            betterRelatedCollection = relation.collection;
+            console.log(`Found better relation for ${field.collection}.${fieldName}: points to ${betterRelatedCollection}`);
+            break;
+          }
+        }
+        
+        // Alternative check: Look for relations where this collection is the related_collection
+        // and the other collection name patterns suggest a match
+        if (!betterRelatedCollection) {
+          for (const relation of this.snapshot.data.relations) {
+            if (relation.related_collection === field.collection) {
+              const otherCollection = relation.collection;
+              
+              // Check if the other collection has a name pattern that matches our field name
+              const isNameMatch = 
+                // Check for patterns like "field_name" = "collection_name"
+                otherCollection === fieldName ||
+                // Check for patterns like "field_names" = "collection_name" (pluralization)
+                (fieldName.endsWith('s') && otherCollection === fieldName.slice(0, -1)) ||
+                // Check for patterns like "field_names" = "collection_names" (exact plural match)
+                otherCollection === fieldName ||
+                // Check for patterns like "field_name" = "parent_field_name" (field with parent prefix)
+                otherCollection === `${field.collection}_${fieldName}` ||
+                // Check for patterns like "field_name" = "prefix_field_name" (any prefix)
+                otherCollection.endsWith(`_${fieldName}`);
+              
+              if (isNameMatch) {
+                betterRelatedCollection = otherCollection;
+                console.log(`Found relation with matching name pattern: ${field.collection}.${fieldName} -> ${betterRelatedCollection}`);
+                break;
+              }
+            }
+          }
+        }
+      }
+      
+      // APPROACH 2: Fall back to collection name pattern matching if no relation is found
+      if (!betterRelatedCollection) {
+        // Collection name matching strategies in priority order:
+        
+        // 1. Exact match with field name (field 'users' → collection 'users')
+        if (allCollections.includes(fieldName)) {
+          betterRelatedCollection = fieldName;
+          console.log(`Field name ${fieldName} directly matches a collection`);
+        }
+        // 2. Singular match if field is plural (field 'users' → collection 'user')
+        else if (fieldName.endsWith('s') && allCollections.includes(fieldName.slice(0, -1))) {
+          betterRelatedCollection = fieldName.slice(0, -1);
+          console.log(`Field name ${fieldName} matches singular collection ${betterRelatedCollection}`);
+        }
+        // 3. Parent collection as prefix (field 'prices' in 'tickets' → collection 'ticket_prices')
+        else if (allCollections.includes(`${field.collection.replace(/s$/, '')}_${fieldName}`)) {
+          betterRelatedCollection = `${field.collection.replace(/s$/, '')}_${fieldName}`;
+          console.log(`Found collection with parent prefix: ${betterRelatedCollection} for field ${fieldName}`);
+        }
+        // 4. General prefix pattern (field 'prices' → any collection '*_prices')
+        else {
+          const prefixPattern = new RegExp(`^\\w+_${fieldName}$`);
+          const prefixMatches = allCollections.filter(c => prefixPattern.test(c));
+          
+          if (prefixMatches.length === 1) {
+            betterRelatedCollection = prefixMatches[0];
+            console.log(`Found collection with prefix pattern: ${betterRelatedCollection} for field ${fieldName}`);
+          }
+        }
+        
+        // 5. Check for singular field name with plural collection (field 'price' → collection 'prices')
+        if (!betterRelatedCollection && allCollections.includes(`${fieldName}s`)) {
+          betterRelatedCollection = `${fieldName}s`;
+          console.log(`Field name ${fieldName} matches plural collection ${betterRelatedCollection}`);
+        }
+        
+        // 6. Try collections with field name as suffix (field 'items' → collection 'scheduled_items')
+        if (!betterRelatedCollection) {
+          const suffixPattern = new RegExp(`^\\w+_${fieldName}$`);
+          const suffixMatches = allCollections.filter(c => suffixPattern.test(c));
+          
+          if (suffixMatches.length === 1) {
+            betterRelatedCollection = suffixMatches[0];
+            console.log(`Found collection with matching suffix: ${betterRelatedCollection} for field ${fieldName}`);
+          }
+        }
+      }
+      
+      // If we found a better collection through any method, use its type
+      if (betterRelatedCollection) {
+        const correctTypeName = this.getTypeNameForCollection(betterRelatedCollection);
+        const correctIdType = this.getIdTypeForCollection(betterRelatedCollection);
+        
+        console.log(`Using improved relation: ${field.collection}.${fieldName} -> ${betterRelatedCollection} (${correctTypeName})`);
+        
+        return this.options.useTypeReferences 
+          ? `${correctIdType}[] | ${correctTypeName}[]`
+          : `${correctTypeName}[]`;
+      }
+    }
+    
+    // If there's no need to override the relationship, proceed with normal processing
+    // For many-to-any relationships
+    if (relationship.type === RelationshipType.ManyToAny) {
+      if (field.field === "item") {
+        return "string"; // ID of the related item
+      }
+      if (field.field === "collection") {
+        return "string"; // Name of the related collection
+      }
+    }
+    
+    // Get the related type name
+    const relatedTypeName = relationship.relatedType;
+    const relatedIdType = this.getIdTypeForCollection(relationship.relatedCollection);
+    
+    // Return different types based on relationship type and useTypeReferences option
+    switch (relationship.type) {
+      case RelationshipType.OneToMany:
+        // Use the original related type for OneToMany
+        // (The enhanced detection has already been done in the if statement above)
+        return this.options.useTypeReferences 
+          ? `${relatedIdType}[] | ${relatedTypeName}[]`
+          : `${relatedTypeName}[]`;
+          
+      case RelationshipType.ManyToMany: {
+        // In junction tables (M2M collections), relationships are now handled as arrays too
+        // since both sides of the relationship need to be arrays to work with Directus SDK
+        
+        // For all cases, use array types for M2M relationships
+        return this.options.useTypeReferences 
+          ? `${relatedIdType}[] | ${relatedTypeName}[]`
+          : `${relatedTypeName}[]`;
+      }
+        
+      case RelationshipType.ManyToOne:
+        // For M2O relationships - single item reference without null (for SDK compatibility)
+        return this.options.useTypeReferences 
+          ? `${relatedIdType} | ${relatedTypeName}`
+          : relatedTypeName;
+        
+      case RelationshipType.OneToOne:
+        // For O2O relationships - single item reference without null (for SDK compatibility)
+        return this.options.useTypeReferences 
+          ? `${relatedIdType} | ${relatedTypeName}`
+          : relatedTypeName;
+        
+      default:
+        // Default for unknown relationship types
+        return "unknown";
+    }
+  }
+  
+  /**
+   * Check if a collection is a junction table (M2M or M2A intermediary)
+   * Junction tables typically have _id fields and are used for M2M/M2A relationships
+   */
+  private isJunctionTable(collectionName: string): boolean {
+    // Quick check based on collection name patterns common for junction tables
+    if (collectionName.includes('_') && !collectionName.startsWith('directus_')) {
+      // Get field names for this collection
+      const collectionFields = this.getAllFieldsForCollection(collectionName);
+      
+      // Check for M2A pattern (item + collection fields)
+      const hasItemField = collectionFields.some(field => field.field === 'item');
+      const hasCollectionField = collectionFields.some(field => field.field === 'collection');
+      
+      // M2A junction tables have item and collection fields
+      if (hasItemField && hasCollectionField) {
+        return true;
+      }
+      
+      // Count fields that end with _id
+      const idFields = collectionFields.filter(field => 
+        field.field.endsWith('_id') || 
+        (field.schema?.foreign_key_table !== null && field.schema?.foreign_key_table !== undefined)
+      );
+      
+      // A junction table typically has at least 2 foreign key fields
+      return idFields.length >= 2;
+    }
+    
+    // Also check relations data for junction tables
+    if (this.snapshot.data.relations) {
+      // Junction tables are frequently referenced with junction_field in relations
+      const isReferencedAsJunction = this.snapshot.data.relations.some(
+        relation => relation.collection === collectionName && relation.meta.junction_field
+      );
+      
+      if (isReferencedAsJunction) {
+        return true;
+      }
+      
+      // Check for collection/item pattern in relations (M2A)
+      const hasM2AFields = this.snapshot.data.relations.some(
+        relation => 
+          relation.collection === collectionName && 
+          (relation.field === 'item' || relation.field === 'collection')
+      );
+      
+      if (hasM2AFields) {
+        return true;
+      }
+    }
+    
+    return false;
+  }
+
+  /**
+   * Get a relationship definition for a field if it exists
+   */
+  private getRelationshipForField(collectionName: string, fieldName: string) {
+    return this.relationships.get(collectionName)?.get(fieldName);
+  }
+
+  /**
+   * Generate the root interface containing all collections
+   */
+  private generateRootInterface(): void {
+    if (!this.snapshot.data.collections || this.snapshot.data.collections.length === 0) {
+      return;
+    }
+    
+    // Check if we need to add scheduled_items to Event
+    if (this.typeDefinitions.has('Event')) {
+      console.log("Found Event type, checking if it needs scheduled_items field...");
+      
+      const eventContent = this.typeDefinitions.get('Event')!.content;
+      
+      // Check if scheduled_items is already in the Event type
+      if (!eventContent.includes('scheduled_items:')) {
+        console.log("scheduled_items field not found in Event type, adding it");
+        
+        // Add the scheduled_items field to the Event type
+        const updatedContent = eventContent.replace(
+          /}(\s*)$/,
+          '  scheduled_items: number[] | EventsScheduleItem[];\n}$1'
+        );
+        
+        // Update the type definition
+        this.typeDefinitions.set('Event', {
+          content: updatedContent,
+          properties: []
+        });
+        
+        console.log("scheduled_items field added to Event type");
+      } else {
+        console.log("scheduled_items field already exists in Event type");
+      }
+    }
+    
+    // Debug all type definitions
+    console.log("\n=== All generated type definitions ===");
+    for (const [typeName, typeDefinition] of this.typeDefinitions.entries()) {
+      // If it's Event, log the full content
+      if (typeName === 'Event') {
+        console.log(`Type ${typeName} content:`);
+        console.log(typeDefinition.content);
+      } else {
+        console.log(`Type ${typeName} (${typeDefinition.content.split('\n').length} lines)`);
+      }
+    }
+    
+    const lines: string[] = [
+      `export ${this.options.useTypes ? "type" : "interface"} ${this.options.typeName} ${this.options.useTypes ? "= " : ""}{`
+    ];
+    
+    // Add non-system collections
+    const regularCollections = this.snapshot.data.collections.filter(
+      c => !c.collection.startsWith("directus_")
+    );
+    
+    for (const collection of regularCollections) {
+      // Get the type name for this collection
+      const typeName = this.getTypeNameForCollection(collection.collection);
+      
+      // Check if this is a singleton collection
+      const isSingleton = collection.meta.singleton === true;
+      
+      // Add to the root interface - singletons are not arrays
+      lines.push(`  ${collection.collection}: ${typeName}${isSingleton ? "" : "[]"};`);
+    }
+    
+    // Close the interface
+    lines.push(`}`);
+    
+    // Add the root interface to our type definitions
+    this.addTypeDefinition(this.options.typeName, lines);
+  }
+  
+  /**
+   * Add system collections to the root interface
+   */
+  private addSystemCollectionsToRoot(): void {
+    // Check if we have the root interface
+    if (!this.typeDefinitions.has(this.options.typeName)) {
+      return;
+    }
+    
+    // Get the current content of the root interface
+    const currentContent = this.typeDefinitions.get(this.options.typeName)!.content;
+    
+    // Get the system type definitions
+    const systemTypes = Array.from(this.typeDefinitions.keys())
+      .filter(name => name.startsWith("Directus"));
+    
+    if (systemTypes.length === 0) {
+      return;
+    }
+    
+    // Parse the current content to insert system collections
+    const lines = currentContent.split("\n");
+    const closingBraceIndex = lines.findIndex(line => line.trim() === "}");
+    
+    if (closingBraceIndex === -1) {
+      return;
+    }
+    
+    // Make sure we have a fresh slate of lines
+    const updatedLines = [...lines.slice(0, closingBraceIndex)];
+    
+    // Add system collections
+    for (const typeName of systemTypes) {
+      // Convert PascalCase type name to snake_case collection name
+      let collectionName = "";
+      
+      if (typeName === "DirectusUser") {
+        collectionName = "directus_users";
+      } else if (typeName === "DirectusFile") {
+        collectionName = "directus_files";
+      } else if (typeName === "DirectusFolder") {
+        collectionName = "directus_folders";
+      } else if (typeName === "DirectusRole") {
+        collectionName = "directus_roles";
+      } else {
+        // General case - convert camelCase to snake_case
+        const words = typeName.replace(/^Directus/, '').split(/(?=[A-Z])/);
+        const snakeCase = words.map(word => word.toLowerCase()).join('_');
+        collectionName = `directus_${snakeCase}`;
+      }
+      
+      // System collections are never singletons
+      updatedLines.push(`  ${collectionName}: ${typeName}[];`);
+    }
+    
+    // Add closing brace and rest of the content
+    updatedLines.push(lines[closingBraceIndex]);
+    updatedLines.push(...lines.slice(closingBraceIndex + 1));
+    
+    // Update the type definition
+    this.typeDefinitions.set(
+      this.options.typeName, 
+      {
+        content: updatedLines.join("\n"),
+        properties: []
+      }
+    );
+  }
+
+  /**
+   * Add a type definition to the map
+   */
+  private addTypeDefinition(name: string, lines: string[]): void {
+    // Join lines with newlines
+    const content = lines.join("\n") + "\n\n";
+    
+    // Store the type definition
+    this.typeDefinitions.set(name, {
+      content,
+      properties: [] // We don't need to track properties in the simplified version
+    });
+  }
+
+  /**
+   * Generate minimal interfaces for system collections referenced in relations
+   */
+  private generateReferencedSystemCollections(): void {
+    // Find all system collections referenced in relations
+    const referencedSystemCollections = new Set<string>();
+    
+    if (this.snapshot.data.relations) {
+      for (const relation of this.snapshot.data.relations) {
+        // Check if this is a relation to a system collection
+        if (relation.related_collection?.startsWith('directus_')) {
+          referencedSystemCollections.add(relation.related_collection);
+        }
+      }
+    }
+    
+    // Generate minimal interfaces for referenced system collections
+    for (const collectionName of referencedSystemCollections) {
+      const typeName = this.getTypeNameForCollection(collectionName);
+      
+      // Skip if already defined
+      if (this.typeDefinitions.has(typeName)) continue;
+      
+      // Determine the ID type for this collection
+      const idType = this.getIdTypeForCollection(collectionName);
+      
+      if (this.options.includeSystemFields) {
+        // If includeSystemFields is true and we have system fields defined,
+        // generate a more complete interface from SYSTEM_FIELDS
+        this.generateSystemCollectionFromTemplate(collectionName, typeName, idType);
+      } else {
+        // Otherwise, generate a minimal interface with just the ID
+        const lines = [
+          `export ${this.options.useTypes ? "type" : "interface"} ${typeName} ${this.options.useTypes ? "= " : ""}{`,
+          `  id: ${idType};`,
+          `}`
+        ];
+        
+        this.addTypeDefinition(typeName, lines);
+      }
+    }
+  }
+  
+  /**
+   * Generate system collection interface from predefined fields template
+   */
+  private generateSystemCollectionFromTemplate(
+    collectionName: string, 
+    typeName: string, 
+    idType: "string" | "number"
+  ): void {
+    // Start with the basic interface
+    const lines = [
+      `export ${this.options.useTypes ? "type" : "interface"} ${typeName} ${this.options.useTypes ? "= " : ""}{`,
+      `  id: ${idType};`
+    ];
+    
+    // Use SYSTEM_FIELDS to populate the interface
+    
+    // Check if this collection exists in SYSTEM_FIELDS
+    if (collectionName in SYSTEM_FIELDS) {
+      // Add each system field (skip 'id' since we already added it)
+      const fields = SYSTEM_FIELDS[collectionName as keyof typeof SYSTEM_FIELDS] as readonly string[];
+      
+      for (const field of fields) {
+        if (field === 'id') continue;
+        
+        // Map common field names to appropriate types
+        const fieldType = this.getSystemFieldType(field);
+        lines.push(`  ${field}: ${fieldType};`);
+      }
+    }
+    
+    // Close the interface
+    lines.push('}');
+    
+    // Add the type definition
+    this.addTypeDefinition(typeName, lines);
+  }
+  
+  /**
+   * Get the appropriate TypeScript type for a system field
+   */
+  private getSystemFieldType(fieldName: string): string {
+    // Map common field names to appropriate types
+    switch (fieldName) {
+      // String fields
+      case 'name':
+      case 'first_name':
+      case 'last_name':
+      case 'email':
+      case 'title':
+      case 'description':
+      case 'icon':
+      case 'note':
+      case 'type':
+      case 'filename_disk':
+      case 'filename_download':
+      case 'charset':
+      case 'status':
+      case 'role':
+      case 'token':
+      case 'provider':
+      case 'external_identifier':
+        return 'string';
+      
+      // Number fields
+      case 'width':
+      case 'height':
+      case 'duration':
+      case 'filesize':
+      case 'sort':
+        return 'number';
+      
+      // Boolean fields
+      case 'admin_access':
+      case 'app_access':
+      case 'email_notifications':
+      case 'tfa_secret':
+        return 'boolean';
+      
+      // Date fields
+      case 'last_access':
+      case 'last_page':
+      case 'uploaded_on':
+      case 'modified_on':
+      case 'created_on':
+      case 'date_created':
+      case 'date_updated':
+        return "'datetime'";
+      
+      // Object fields
+      case 'auth_data':
+      case 'appearance':
+      case 'theme_dark':
+      case 'theme_light':
+      case 'theme_light_overrides':
+      case 'theme_dark_overrides':
+      case 'tags':
+      case 'metadata':
+      case 'options':
+      case 'translations':
+        return "'json'";
+      
+      // Relation fields
+      case 'avatar':
+      case 'folder':
+      case 'uploaded_by':
+      case 'modified_by':
+      case 'user_created':
+      case 'user_updated':
+      case 'parent':
+        return 'string';
+      
+      // Array fields
+      case 'children':
+      case 'users':
+      case 'policies':
+        return "'csv'";
+      
+      // Default for unknown fields
+      default:
+        return 'any';
+    }
+  }
+  
+  /**
+   * Build the final TypeScript output
+   */
+  private buildOutput(): string {
+    // First generate interfaces for referenced system collections
+    this.generateReferencedSystemCollections();
+    
+    // Generate the ApiCollections interface
+    this.generateRootInterface();
+    
+    // If includeSystemFields is true, update the ApiCollections interface to include system collections
+    if (this.options.includeSystemFields) {
+      this.addSystemCollectionsToRoot();
+    }
+    
+    const output: string[] = [];
+    
+    // Add comment header
+    output.push("/**");
+    output.push(" * Generated TypeScript types for Directus Schema");
+    output.push(" * Generated on: " + new Date().toISOString());
+    output.push(" */\n");
+    
+    // Add all type definitions in order:
+    // 1. Regular collection types
+    const regularTypes = Array.from(this.typeDefinitions.keys())
+      .filter(name => !name.startsWith("Directus") && name !== this.options.typeName);
+    
+    for (const typeName of regularTypes) {
+      output.push(this.typeDefinitions.get(typeName)!.content);
+    }
+    
+    // 2. System collection types
+    const systemTypes = Array.from(this.typeDefinitions.keys())
+      .filter(name => name.startsWith("Directus"));
+    
+    if (systemTypes.length > 0) {
+      for (const typeName of systemTypes) {
+        output.push(this.typeDefinitions.get(typeName)!.content);
+      }
+    }
+    
+    // 3. Root type at the end
+    if (this.typeDefinitions.has(this.options.typeName)) {
+      output.push(this.typeDefinitions.get(this.options.typeName)!.content);
+    }
+    
+    return output.join("");
+  }
+
+  /**
+   * Get the collection name to type name mapping
+   */
+  private getTypeNameForCollection(collectionName: string): string {
+    // Check if we already have mapped this collection
+    if (this.collectionTypes.has(collectionName)) {
+      return this.collectionTypes.get(collectionName)!;
+    }
+    
+    // For system collections, use standardized names
+    if (collectionName.startsWith("directus_")) {
+      const baseName = collectionName.replace(/^directus_/, "");
+      
+      // Map common system collections
+      const systemNameMap: Record<string, string> = {
+        "users": "DirectusUser",
+        "files": "DirectusFile",
+        "folders": "DirectusFolder",
+        "roles": "DirectusRole",
+        "permissions": "DirectusPermission",
+        "presets": "DirectusPreset",
+        "fields": "DirectusField",
+        "collections": "DirectusCollection",
+        "relations": "DirectusRelation",
+        "revisions": "DirectusRevision",
+        "webhooks": "DirectusWebhook",
+        "operations": "DirectusOperation",
+        "flows": "DirectusFlow",
+        "activity": "DirectusActivity",
+        "settings": "DirectusSetting"
+      };
+      
+      if (baseName in systemNameMap) {
+        const typeName = systemNameMap[baseName];
+        this.collectionTypes.set(collectionName, typeName);
+        return typeName;
+      }
+      
+      // For other system collections, generate a name
+      // Check if it's a singleton
+      const isSingletonCollection = this.isSingleton(collectionName);
+      const pascalName = toPascalCase(baseName);
+      const typeName = "Directus" + (isSingletonCollection ? pascalName : this.makeSingular(pascalName));
+      this.collectionTypes.set(collectionName, typeName);
+      return typeName;
+    }
+    
+    // For regular collections, convert to PascalCase singular (unless it's a singleton)
+    const isSingletonCollection = this.isSingleton(collectionName);
+    const pascalName = toPascalCase(collectionName);
+    const typeName = isSingletonCollection ? pascalName : this.makeSingular(pascalName);
+    this.collectionTypes.set(collectionName, typeName);
+    return typeName;
+  }
+
+  /**
+   * Convert plural to singular (basic rules)
+   */
+  private makeSingular(name: string): string {
+    // Handle common plural endings
+    if (name.endsWith("ies")) {
+      return name.slice(0, -3) + "y";
+    } else if (name.endsWith("ses")) {
+      return name.slice(0, -2);
+    } else if (
+      name.endsWith("s") &&
+      !name.endsWith("ss") &&
+      !name.endsWith("us") &&
+      !name.endsWith("is")
+    ) {
+      return name.slice(0, -1);
+    }
+    return name;
+  }
+
+  /**
+   * Get the ID type for a collection
+   */
+  private getIdTypeForCollection(collectionName: string): "string" | "number" {
+    // Check if we've already determined the ID type
+    if (this.collectionIdTypes.has(collectionName)) {
+      return this.collectionIdTypes.get(collectionName)!;
+    }
+    
+    // System collections with number IDs
+    if (collectionName.startsWith("directus_") && 
+        this.numberIdCollections.has(collectionName)) {
+      return "number";
+    }
+    
+    // If we have fields data, check the actual ID field
+    if (this.snapshot.data.fields) {
+      const idField = this.snapshot.data.fields.find(
+        field => field.collection === collectionName && field.field === "id"
+      );
+      
+      if (idField) {
+        if (
+          idField.type === "integer" || 
+          idField.type === "number" || 
+          idField.schema?.data_type === "integer" ||
+          idField.schema?.data_type === "number"
+        ) {
+          return "number";
+        }
+      }
+    }
+    
+    // Default to string for UUIDs and other string IDs
+    return "string";
+  }
+
+  /**
+   * Get all fields for a collection
+   */
+  private getAllFieldsForCollection(collectionName: string): DirectusField[] {
+    if (!this.snapshot.data.fields) return [];
+    
+    return this.snapshot.data.fields.filter(
+      field => field.collection === collectionName
+    );
+  }
+
+  /**
+   * Get custom fields for a system collection
+   * 
+   * For system collections, we get any field that:
+   * 1. Is explicitly marked as not a system field (meta.system === false)
+   * 2. Is not in the SYSTEM_FIELDS constant
+   * 3. Has special attributes that indicate it's a relationship
+   * 
+   * For regular collections, we return all fields.
+   */
+  private getCustomFieldsForCollection(collectionName: string): DirectusField[] {
+    if (!this.snapshot.data.fields) return [];
+    
+    // For non-system collections, return all fields
+    if (!collectionName.startsWith("directus_")) {
+      return this.snapshot.data.fields.filter(
+        field => field.collection === collectionName
+      );
+    }
+    
+    // For system collections, we need to identify custom fields
+    
+    // Step 1: Get all fields for this collection from the schema
+    const allFields = this.snapshot.data.fields?.filter(
+      field => field.collection === collectionName
+    ) || [];
+    
+    // Step 2: Filter to find custom fields using multiple criteria
+    const customFields = allFields.filter(field => {
+      // Skip id field - we'll always add it
+      if (field.field === 'id') return false;
+      
+      // Include if field is explicitly marked as not a system field
+      if (field.meta.system === false) return true;
+      
+      // If we have a systemFieldDetector, use it to check if this is a system field
+      if (this.systemFieldDetector && this.systemFieldDetector.isSystemField(collectionName, field.field)) {
+        // This is a system field according to the detector, so don't include it as a custom field
+        return false;
+      }
+      
+      // Fallback to hardcoded system fields list if detector isn't available or doesn't have data
+      // Create a case-insensitive set for better matching
+      let systemFieldSet = new Set<string>();
+      if (Object.prototype.hasOwnProperty.call(SYSTEM_FIELDS, collectionName)) {
+        const systemFieldsKey = collectionName as keyof typeof SYSTEM_FIELDS;
+        const systemFieldNames = [...SYSTEM_FIELDS[systemFieldsKey]];
+        systemFieldSet = new Set(systemFieldNames.map(f => f.toLowerCase()));
+        
+        // If field is not in the system fields list, include it
+        if (!systemFieldSet.has(field.field.toLowerCase())) return true;
+      } else {
+        // If collection isn't in SYSTEM_FIELDS, all fields are custom
+        return true;
+      }
+      
+      // Include if field has relationship attributes
+      if (field.meta.special) {
+        // Handle array or string special values
+        const specialValues = Array.isArray(field.meta.special) 
+          ? field.meta.special 
+          : [field.meta.special];
+          
+        // Check for relationship specials
+        for (const special of specialValues) {
+          if (special === "m2m" || special === "o2m" || special === "m2o" || 
+              special === "file" || special === "files" || special === "m2a") {
+            return true;
+          }
+        }
+      }
+      
+      // Include if field has a relationship interface
+      if (field.meta.interface && (
+        field.meta.interface.includes("m2m") || 
+        field.meta.interface.includes("many-to-many") ||
+        field.meta.interface.includes("one-to-many") ||
+        field.meta.interface.includes("many-to-one") ||
+        field.meta.interface.includes("relationship") ||
+        field.meta.interface.includes("file") ||
+        field.meta.interface.includes("user")
+      )) return true;
+      
+      return false;
+    });
+    
+    // Step 4: Look for fields that might be defined in relations but not in fields
+    const syntheticFields: DirectusField[] = [];
+    const customFieldNames = new Set(customFields.map(f => f.field));
+    
+    // Find all relations that target this collection
+    if (this.snapshot.data.relations) {
+      for (const relation of this.snapshot.data.relations) {
+        // Check for fields targeting this collection via one_field
+        if (relation.related_collection === collectionName && 
+            relation.meta?.one_field && 
+            !customFieldNames.has(relation.meta.one_field)) {
+          
+          // Get junction table info for better typing
+          const junctionTable = relation.collection;
+          const junctionField = relation.meta.junction_field;
+          
+          // Create a synthetic field for this relationship
+          const syntheticField: DirectusField = {
+            collection: collectionName,
+            field: relation.meta.one_field,
+            type: "alias",
+            meta: {
+              collection: collectionName,
+              field: relation.meta.one_field,
+              hidden: false,
+              interface: "list-m2m",
+              special: ["m2m"],
+              system: false,
+              junction_collection: junctionTable,
+              junction_field: junctionField
+            },
+            schema: {
+              name: relation.meta.one_field,
+              table: collectionName,
+              data_type: "alias",
+              default_value: null,
+              max_length: null,
+              numeric_precision: null,
+              numeric_scale: null,
+              is_nullable: true,
+              is_unique: false,
+              is_primary_key: false,
+              has_auto_increment: false,
+              foreign_key_table: null,
+              foreign_key_column: null
+            }
+          };
+          
+          syntheticFields.push(syntheticField);
+          customFieldNames.add(relation.meta.one_field);
+        }
+        
+        // Check for many-to-one or one-to-one relations targeting this collection
+        if (relation.collection === collectionName && 
+            relation.related_collection &&
+            !relation.meta.one_field && // Not a one-to-many or many-to-many
+            !relation.meta.junction_field && // Not a junction
+            !customFieldNames.has(relation.field)) {
+          
+          // Create a synthetic field for this relationship
+          const syntheticField: DirectusField = {
+            collection: collectionName,
+            field: relation.field,
+            type: "alias",
+            meta: {
+              collection: collectionName,
+              field: relation.field,
+              hidden: false,
+              interface: "many-to-one",
+              special: ["m2o"],
+              system: false
+            },
+            schema: {
+              name: relation.field,
+              table: collectionName,
+              data_type: "alias",
+              default_value: null,
+              max_length: null,
+              numeric_precision: null,
+              numeric_scale: null,
+              is_nullable: true,
+              is_unique: false,
+              is_primary_key: false,
+              has_auto_increment: false,
+              foreign_key_table: relation.related_collection,
+              foreign_key_column: "id"
+            }
+          };
+          
+          syntheticFields.push(syntheticField);
+          customFieldNames.add(relation.field);
+        }
+      }
+    }
+    
+    // Return all custom fields (detected + synthetic)
+    return [...customFields, ...syntheticFields];
+  }
+}

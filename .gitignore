@@ -9,3 +9,4 @@ dev_archive/
 test-schema/
 CLAUDE.md
 .env.**
+data/

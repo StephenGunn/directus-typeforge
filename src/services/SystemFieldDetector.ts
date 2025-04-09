@@ -1,6 +1,7 @@
 import { readFile } from "fs/promises";
 import { DirectusFieldMetadata, DirectusFieldsResponse, SchemaReadOptions } from "../types";
 import { SchemaReader } from "./SchemaReader";
+import { SYSTEM_FIELDS } from "../constants/system_fields";
 
 /**
  * Detects and manages system fields dynamically using the fields endpoint
@@ -114,19 +115,17 @@ export class SystemFieldDetector {
   private processFieldsData(fields: DirectusFieldMetadata[]): void {
     // Process each field
     for (const field of fields) {
-      // Only process system fields
-      if (field.meta.system) {
-        const collection = field.collection;
-        const fieldName = field.field;
-        
-        // Initialize set for this collection if it doesn't exist
-        if (!this.systemFields.has(collection)) {
-          this.systemFields.set(collection, new Set<string>());
-        }
-        
-        // Add field to the set
-        this.systemFields.get(collection)?.add(fieldName);
+      const collection = field.collection;
+      const fieldName = field.field;
+      
+      // Initialize set for this collection if it doesn't exist
+      if (!this.systemFields.has(collection)) {
+        this.systemFields.set(collection, new Set<string>());
       }
+      
+      // Add all field to the set, regardless of whether they're system fields
+      // This ensures we have a complete list of fields to work with
+      this.systemFields.get(collection)?.add(fieldName);
     }
   }
   
@@ -134,24 +133,54 @@ export class SystemFieldDetector {
    * Check if a field is a system field
    */
   isSystemField(collection: string, fieldName: string): boolean {
-    // Check if we have this collection in our map
+    // Check if this collection exists in systemFields
     if (!this.systemFields.has(collection)) {
       return false;
     }
     
-    // Check if this field is in the collection's system fields
-    return this.systemFields.get(collection)?.has(fieldName) || false;
+    // Check if the field exists for this collection
+    if (!this.systemFields.get(collection)?.has(fieldName)) {
+      return false;
+    }
+    
+    // For system collections, we need to determine if the field is actually a system field
+    // by checking against the hardcoded SYSTEM_FIELDS
+    if (collection.startsWith('directus_')) {
+      const systemCollectionFields = SYSTEM_FIELDS[collection as keyof typeof SYSTEM_FIELDS];
+      
+      // If this field is in the hardcoded system fields, it's a system field
+      if (systemCollectionFields && Array.isArray(systemCollectionFields)) {
+          // Using this approach to avoid type errors with readonly arrays
+          const fieldExists = systemCollectionFields.some(field => field === fieldName);
+          if (fieldExists) {
+              return true;
+          }
+      }
+      
+      // Otherwise it's a custom field in a system collection
+      return false;
+    }
+    
+    // For non-system collections, all fields are considered non-system
+    return false;
   }
   
   /**
-   * Get all system fields for a collection
+   * Get all fields for a collection
    */
   getSystemFields(collection: string): string[] {
-    if (!this.systemFields.has(collection)) {
-      return [];
+    // For system collections, return fields from SYSTEM_FIELDS constant
+    if (collection.startsWith('directus_')) {
+      // Check if we have this system collection in our hardcoded system fields
+      const systemCollectionFields = SYSTEM_FIELDS[collection as keyof typeof SYSTEM_FIELDS];
+      if (systemCollectionFields && Array.isArray(systemCollectionFields)) {
+        return [...systemCollectionFields] as string[];
+      }
     }
     
-    return Array.from(this.systemFields.get(collection) || []);
+    // For regular collections or collections not found in SYSTEM_FIELDS,
+    // return an empty array as they don't have system fields
+    return [];
   }
   
   /**

@@ -29,10 +29,11 @@ const targetFile = `${TYPES_DIR}/${OUT_FILE}`;
   const cliPath = path.resolve(process.cwd(), 'build/cli.cjs');
 
   // Build the command string - use node to run the local build directly
-  const command = `node ${cliPath} --host ${DIRECTUS_URL} -u true --email ${ADMIN_EMAIL} --password ${ADMIN_PASSWORD} --typeName ApiCollections --outFile ${targetFile} -m true -s false`;
+  const command = `node ${cliPath} --host ${DIRECTUS_URL} -u true --email ${ADMIN_EMAIL} --password ${ADMIN_PASSWORD} --typeName ApiCollections --outFile ${targetFile} -m true -s true`;
 
-  // Execute the command
-  exec(command, (error, stdout, stderr) => {
+  // Execute the command with output to debug.log
+  const command2 = `${command} > debug.log 2>&1`;
+  exec(command2, (error, stdout, stderr) => {
     if (error) {
       spinner.fail(`Error: ${error.message}`);
       return;
@@ -46,6 +47,6 @@ const targetFile = `${TYPES_DIR}/${OUT_FILE}`;
     console.log(stdout);
 
     // Stop the spinner and print the success message
-    spinner.succeed(`Successfully generated a new type file at '${targetFile}'`);
+    spinner.succeed(`Successfully generated a new type file at '${targetFile}' (see debug.log for details)`);
   });
 })();

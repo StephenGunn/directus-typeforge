@@ -54,6 +54,7 @@ export type DirectusCollection = {
     collection: string;
     singleton: boolean;  // Whether this collection is a singleton
     note?: string;       // Collection description
+    _type_name?: string; // For caching type name during processing
     [key: string]: unknown;  // Other metadata
   };
   schema: {
@@ -78,6 +79,9 @@ export type DirectusField = {
     hidden?: boolean;    // Whether field is hidden
     note?: string;       // Field description for JSDoc
     width?: string;      // Display width in admin app
+    system?: boolean;    // Whether field is a system field
+    junction_collection?: string;  // For M2M relations, the junction collection
+    junction_field?: string | null;  // For M2M relations, the junction field
     [key: string]: unknown;  // Other metadata
   };
   schema: {
@@ -107,6 +111,8 @@ export type DirectusRelation = {
     many_field: string;              // Field on the "many" side
     one_collection: string | null;   // Collection on the "one" side
     one_field: string | null;        // Field on the "one" side
+    one_collection_field?: string;   // For M2A, the field storing the collection name
+    one_allowed_collections?: string[]; // For M2A, the allowed collections
     [key: string]: unknown;          // Other metadata
   };
   schema?: {

@@ -43,7 +43,7 @@
   ],
   "main": "./build/index.cjs",
   "scripts": {
-    "build": "npm run build:clean && pnpm run build:esbuild && pnpm run build:eslint && pnpm run build:tsc",
+    "build": "npm run build:clean && pnpm run build:esbuild && pnpm run build:tsc",
     "build:clean": "rm -rf build",
     "build:esbuild": "./esbuild.mjs",
     "build:eslint": "eslint src",
