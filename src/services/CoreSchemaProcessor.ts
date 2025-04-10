@@ -298,10 +298,14 @@ export class CoreSchemaProcessor {
     // First, ensure all system collections referenced in relations are processed
     this.ensureSystemCollectionsFromRelations();
     
+    // Collections to exclude from output completely
+    const excludedCollections = ['Application_Data', 'application_data'];
+    
     // Process all collections in the schema
     for (const collection of this.snapshot.data.collections) {
-      // Skip if already processed
-      if (this.processedCollections.has(collection.collection)) continue;
+      // Skip if already processed or in exclusion list
+      if (this.processedCollections.has(collection.collection) || 
+          excludedCollections.includes(collection.collection)) continue;
       
       // Mark as processed
       this.processedCollections.add(collection.collection);
@@ -495,6 +499,7 @@ export class CoreSchemaProcessor {
 
   /**
    * Generate minimal interfaces for system collections referenced in relations
+   * and essential system collections like DirectusUser
    */
   private generateReferencedSystemCollections(): void {
     // Find all system collections referenced in relations
@@ -507,6 +512,19 @@ export class CoreSchemaProcessor {
           referencedSystemCollections.add(relation.related_collection);
         }
       }
+    }
+    
+    // Add essential system collections that should always be available
+    const essentialSystemCollections = [
+      'directus_users',   // DirectusUser
+      'directus_files',   // DirectusFile
+      'directus_folders', // DirectusFolder
+      'directus_roles'    // DirectusRole
+    ];
+    
+    // Add these to the collections to process
+    for (const collection of essentialSystemCollections) {
+      referencedSystemCollections.add(collection);
     }
     
     // Generate minimal interfaces for referenced system collections
@@ -692,7 +710,7 @@ export class CoreSchemaProcessor {
       return [...schemaFields, ...syntheticFields];
     }
     
-    // For non-system collections, add standard Directus metadata fields that aren't already included
+    // For non-system collections, add standard Directus metadata fields only if they exist in the schema
     const existingFieldNames = new Set(schemaFields.map(f => f.field));
     const standardMetadataFields = ['date_created', 'date_updated', 'user_created', 'user_updated'];
     const syntheticFields: DirectusField[] = [];
@@ -712,36 +730,13 @@ export class CoreSchemaProcessor {
         rel.meta.one_collection_field === "collection"
       );
     
-      
-    // Only add standard fields if this isn't a junction table
-    if (!isJunctionTable) {
-      for (const fieldName of standardMetadataFields) {
-        if (!existingFieldNames.has(fieldName)) {
-          const fieldType = this.systemFieldManager.getSystemFieldType(fieldName);
-          const syntheticField = this.systemFieldManager.createSystemField(
-            collectionName,
-            fieldName,
-            fieldType,
-            false // not an ID field
-          );
-          
-          // Add to synthetic fields list
-          syntheticFields.push(syntheticField);
-          
-          // If this is a user field, also create a relationship for it
-          if (fieldName === 'user_created' || fieldName === 'user_updated') {
-            // Create a relationship pointing to directus_users
-            this.relationshipProcessor.addRelationship(
-              collectionName,
-              fieldName,
-              RelationshipType.ManyToOne, // Many-to-one relationship
-              'directus_users', // Related collection is directus_users
-              'DirectusUser' // Type name for the related collection
-            );
-          }
-        }
-      }
-    }
+    // We don't add standard fields automatically anymore
+    // Instead, we only use the fields that are actually defined in the schema snapshot
+    
+    // If you want to add these fields back conditionally, you could introduce a new option like:
+    // if (this.options.addStandardMetadataFields && !isJunctionTable) {
+    //   // then add the fields
+    // }
     
     // Return schema fields plus synthetic standard fields
     return [...schemaFields, ...syntheticFields];

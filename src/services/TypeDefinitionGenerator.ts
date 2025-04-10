@@ -252,9 +252,12 @@ export class TypeDefinitionGenerator {
       `export ${this.useTypes ? "type" : "interface"} ${typeName} ${this.useTypes ? "= " : ""}{`
     ];
     
-    // Add non-system collections
+    // Collections to exclude from output completely
+    const excludedCollections = ['Application_Data', 'application_data'];
+    
+    // Add non-system collections that aren't excluded
     const regularCollections = collections.filter(
-      c => !c.collection.startsWith("directus_")
+      c => !c.collection.startsWith("directus_") && !excludedCollections.includes(c.collection)
     );
     
     for (const collection of regularCollections) {
