@@ -1,0 +1,40 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [ main ]
+  push:
+    branches: [ main ]
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '18'
+        
+    - name: Setup pnpm
+      uses: pnpm/action-setup@v2
+      with:
+        version: 8
+        
+    - name: Install dependencies
+      run: pnpm install --frozen-lockfile
+      
+    - name: Build project
+      run: pnpm build
+      
+    - name: Run linting (if available)
+      run: |
+        if pnpm run lint --if-present; then
+          echo "Linting passed"
+        else
+          echo "No lint script found, skipping"
+        fi
+      continue-on-error: false

@@ -777,19 +777,14 @@ export class CoreSchemaProcessor {
       // Skip id field - we'll always add it
       if (field.field === 'id') return false;
 
-      // fallback for directus-sync
-      if (field.meta === null) {
-        field.meta = {};
-      }
-
       // Include if field is explicitly marked as not a system field
-      if (field.meta.system === false) return true;
+      if (field.meta?.system === false) return true;
       
       // Include if field is not in the system fields list
       if (!systemFieldSet.has(field.field.toLowerCase())) return true;
       
       // Include if field has relationship attributes
-      if (field.meta.special) {
+      if (field.meta?.special) {
         // Handle array or string special values
         const specialValues = Array.isArray(field.meta.special) 
           ? field.meta.special 
@@ -805,7 +800,7 @@ export class CoreSchemaProcessor {
       }
       
       // Include if field has a relationship interface
-      if (field.meta.interface && (
+      if (field.meta?.interface && (
         field.meta.interface.includes("m2m") || 
         field.meta.interface.includes("many-to-many") ||
         field.meta.interface.includes("one-to-many") ||
@@ -884,12 +879,7 @@ export class CoreSchemaProcessor {
       c => c.collection === collectionName
     );
 
-    // fallback for directus-sync
-    if(collection?.meta === null) {
-      collection.meta = {};
-    }
-
-    return collection?.meta.singleton === true;
+    return collection?.meta?.singleton === true;
   }
 
   /**
