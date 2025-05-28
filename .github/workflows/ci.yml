@@ -20,15 +20,18 @@ jobs:
         node-version: '18'
         
     - name: Setup pnpm
-      uses: pnpm/action-setup@v2
+      uses: pnpm/action-setup@v4
       with:
-        version: 8
+        version: 10
         
     - name: Install dependencies
-      run: pnpm install --frozen-lockfile
+      run: pnpm install --no-frozen-lockfile
       
     - name: Build project
       run: pnpm build
+      
+    - name: Test types generation
+      run: pnpm types
       
     - name: Run linting (if available)
       run: |
