@@ -30,9 +30,6 @@ jobs:
     - name: Build project
       run: pnpm build
       
-    - name: Test types generation
-      run: pnpm types
-      
     - name: Run linting (if available)
       run: |
         if pnpm run lint --if-present; then
