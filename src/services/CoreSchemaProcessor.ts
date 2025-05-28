@@ -776,7 +776,12 @@ export class CoreSchemaProcessor {
     return allFields.filter(field => {
       // Skip id field - we'll always add it
       if (field.field === 'id') return false;
-      
+
+      // fallback for directus-sync
+      if (field.meta === null) {
+        field.meta = {};
+      }
+
       // Include if field is explicitly marked as not a system field
       if (field.meta.system === false) return true;
       
@@ -878,7 +883,12 @@ export class CoreSchemaProcessor {
     const collection = this.snapshot.data.collections.find(
       c => c.collection === collectionName
     );
-    
+
+    // fallback for directus-sync
+    if(collection?.meta === null) {
+      collection.meta = {};
+    }
+
     return collection?.meta.singleton === true;
   }
 
