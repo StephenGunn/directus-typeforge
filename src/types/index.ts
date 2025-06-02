@@ -49,7 +49,7 @@ export type DirectusSchemaSnapshot = {
  */
 export type DirectusCollection = {
   collection: string;  // Collection name
-  meta: {
+  meta: null | {
     accountability: string;
     collection: string;
     singleton: boolean;  // Whether this collection is a singleton

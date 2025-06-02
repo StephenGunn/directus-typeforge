@@ -13,7 +13,7 @@ export const findSystemCollections = (collections: DirectusCollection[]): string
  * Determines if a collection is a singleton
  */
 export const isSingleton = (collection: DirectusCollection): boolean => {
-  return collection.meta.singleton === true;
+  return collection.meta?.singleton === true;
 };
 
 /**

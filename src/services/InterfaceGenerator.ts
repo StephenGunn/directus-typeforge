@@ -108,7 +108,7 @@ export class InterfaceGenerator {
         const cleanTypeName = this.typeNameManager.cleanTypeName(typeName);
         
         // Check for singleton collection
-        const isSingleton = collection.meta.singleton === true;
+        const isSingleton = collection.meta?.singleton === true;
 
         source += `\n  ${collectionName}: ${cleanTypeName}${isSingleton ? "" : "[]"};`;
       }

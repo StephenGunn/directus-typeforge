@@ -148,7 +148,7 @@ export class SchemaSnapshotProcessor {
       this.typeNameManager.registerCollection(collection.collection);
       
       // Register singleton collections specifically
-      if (collection.meta.singleton === true) {
+      if (collection.meta?.singleton === true) {
         this.typeNameManager.registerSingleton(collection.collection);
       }
       
@@ -427,7 +427,7 @@ export class SchemaSnapshotProcessor {
     for (const collection of regularCollections) {
       const typeName = this.typeNameManager.getTypeNameForCollection(collection.collection);
       const cleanTypeName = this.typeNameManager.cleanTypeName(typeName);
-      const isSingleton = collection.meta.singleton === true;
+      const isSingleton = collection.meta?.singleton === true;
       
       source += `\n  ${collection.collection}: ${cleanTypeName}${isSingleton ? "" : "[]"};`;
     }
@@ -441,7 +441,7 @@ export class SchemaSnapshotProcessor {
       for (const collection of systemCollections) {
         const typeName = this.typeNameManager.getTypeNameForCollection(collection.collection);
         const cleanTypeName = this.typeNameManager.cleanTypeName(typeName);
-        const isSingleton = collection.meta.singleton === true;
+        const isSingleton = collection.meta?.singleton === true;
         
         if (this.typeTracker.hasType(cleanTypeName)) {
           source += `\n  ${collection.collection}: ${cleanTypeName}${isSingleton ? "" : "[]"};`;

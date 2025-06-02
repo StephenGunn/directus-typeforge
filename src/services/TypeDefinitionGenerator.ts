@@ -262,10 +262,10 @@ export class TypeDefinitionGenerator {
     
     for (const collection of regularCollections) {
       // Get the type name for this collection
-      const typeName = collection.meta._type_name || collection.collection; // Use cached type name if available
+      const typeName = collection.meta?._type_name || collection.collection; // Use cached type name if available
       
       // Check if this is a singleton collection
-      const isSingleton = collection.meta.singleton === true;
+      const isSingleton = collection.meta?.singleton === true;
       
       // Add to the root interface - singletons are not arrays
       lines.push(`  ${collection.collection}: ${typeName}${isSingleton ? "" : "[]"};`);

@@ -165,7 +165,17 @@ export class CoreSchemaProcessor {
       this.collectionIdTypes.set(collection.collection, idType);
       
       // Cache type name on collection for later use
-      collection.meta._type_name = typeName;
+      if (collection.meta) {
+        collection.meta._type_name = typeName;
+      } else {
+        // Initialize meta object if it's null
+        collection.meta = {
+          accountability: "all",
+          collection: collection.collection,
+          singleton: false,
+          _type_name: typeName
+        };
+      }
     }
   }
 
@@ -385,7 +395,17 @@ export class CoreSchemaProcessor {
     const idType = this.collectionIdTypes.get(collectionName) || "string";
     
     // Cache the type name on the collection for later use
-    collection.meta._type_name = typeName;
+    if (collection.meta) {
+      collection.meta._type_name = typeName;
+    } else {
+      // Initialize meta object if it's null
+      collection.meta = {
+        accountability: "all",
+        collection: collection.collection,
+        singleton: false,
+        _type_name: typeName
+      };
+    }
     
     // Process the collection to generate interface
     this.processCollectionAndGenerateInterface(
@@ -486,7 +506,17 @@ export class CoreSchemaProcessor {
     const idType = this.collectionIdTypes.get(collectionName) || "string";
     
     // Cache the type name on the collection for later use
-    collection.meta._type_name = typeName;
+    if (collection.meta) {
+      collection.meta._type_name = typeName;
+    } else {
+      // Initialize meta object if it's null
+      collection.meta = {
+        accountability: "all",
+        collection: collection.collection,
+        singleton: false,
+        _type_name: typeName
+      };
+    }
     
     // Process the collection to generate interface
     this.processCollectionAndGenerateInterface(
