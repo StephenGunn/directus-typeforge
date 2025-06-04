@@ -101,7 +101,7 @@ export class SchemaSnapshotProcessor {
     if (!this.snapshot.data.fields) return;
     
     for (const field of this.snapshot.data.fields) {
-      if (field.meta.note) {
+      if (field.meta?.note) {
         // Create collection map if it doesn't exist
         if (!this.fieldNotes.has(field.collection)) {
           this.fieldNotes.set(field.collection, new Map<string, string>());
@@ -293,7 +293,7 @@ export class SchemaSnapshotProcessor {
     // Add each field to the interface
     for (const field of fields) {
       // Skip hidden fields unless they're system fields and we're including them
-      if (field.meta.hidden && !(this.options.includeSystemFields && field.collection.startsWith("directus_"))) {
+      if (field.meta?.hidden && !(this.options.includeSystemFields && field.collection.startsWith("directus_"))) {
         continue;
       }
       
@@ -353,7 +353,7 @@ export class SchemaSnapshotProcessor {
     }
     
     // Handle special field types
-    if (field.meta.special) {
+    if (field.meta?.special) {
       // Check for JSON
       if (field.meta.special.includes("cast-json")) {
         return "any"; // or "Record<string, any>" or "unknown"

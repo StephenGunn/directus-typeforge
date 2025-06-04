@@ -34,7 +34,7 @@ export class CoreSchemaProcessor {
   private aliasFields: Array<{
     collection: string;
     field: string;
-    fieldMeta: Record<string, unknown>;
+    fieldMeta: Record<string, unknown> | null;
     special?: string[];
   }> = [];
   
