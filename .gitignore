@@ -10,3 +10,4 @@ test-schema/
 CLAUDE.md
 .env.**
 data/
+directus-config/
