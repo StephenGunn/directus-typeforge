@@ -70,7 +70,7 @@ export type DirectusField = {
   collection: string;  // Collection this field belongs to
   field: string;       // Field name
   type: string;        // Field type
-  meta: {
+  meta: null | {
     collection: string;
     field: string;
     special?: string[];  // Special handling flags

@@ -70,11 +70,11 @@ export class TypeDefinitionGenerator {
       const isUIComponent = 
         // Fields with type "alias" and special includes "no-data" (but not m2m)
         (field.type === "alias" && 
-         field.meta.special && 
+         field.meta?.special && 
          field.meta.special.includes("no-data") && 
          !field.meta.special.includes("m2m")) ||
         // Fields with presentation or group interfaces
-        (field.meta.interface && 
+        (field.meta?.interface && 
          (field.meta.interface.startsWith("presentation-") || 
           field.meta.interface.startsWith("group-")));
       
@@ -92,7 +92,7 @@ export class TypeDefinitionGenerator {
       }
       
       // Add JSDoc for field notes if enabled
-      if (this.addTypedocNotes && field.meta.note) {
+      if (this.addTypedocNotes && field.meta?.note) {
         lines.push(`  /** ${field.meta.note} */`);
       }
       
@@ -128,7 +128,7 @@ export class TypeDefinitionGenerator {
     }
     
     // Handle special field types
-    if (field.meta.special) {
+    if (field.meta?.special) {
       // Handle M2M fields marked with special "m2m"
       if (Array.isArray(field.meta.special) && field.meta.special.includes("m2m")) {
         // First, check if the field has junction information 

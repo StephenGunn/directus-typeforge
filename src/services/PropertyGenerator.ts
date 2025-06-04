@@ -31,7 +31,7 @@ export class PropertyGenerator {
    */
   private mapFieldTypeToTs(field: DirectusField): string {
     // Check for special types first
-    if (field.meta.special) {
+    if (field.meta?.special) {
       // Handle JSON fields
       if (field.meta.special.includes("json") || field.type === "json") {
         return "Record<string, unknown>";
@@ -104,7 +104,7 @@ export class PropertyGenerator {
   ): string {
     // Add JSDoc comment if note exists and addTypedocNotes is enabled
     let propertyDefinition = "";
-    if (this.addTypedocNotes && field.meta.note) {
+    if (this.addTypedocNotes && field.meta?.note) {
       propertyDefinition += `  /** ${field.meta.note} */\n`;
     }
     
