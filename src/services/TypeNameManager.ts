@@ -1,5 +1,6 @@
 import { toPascalCase } from "../utils/string";
 import { systemCollections, relationshipPatterns } from "../config";
+import pluralize from "pluralize";
 
 /**
  * Manages type names, collection mappings, and naming conventions for TypeScript definitions
@@ -123,20 +124,8 @@ export class TypeNameManager {
       return name;
     }
     
-    // Common plural endings
-    if (name.endsWith("ies")) {
-      return name.slice(0, -3) + "y";
-    } else if (name.endsWith("ses")) {
-      return name.slice(0, -2);
-    } else if (
-      name.endsWith("s") &&
-      !name.endsWith("ss") &&
-      !name.endsWith("us") &&
-      !name.endsWith("is")
-    ) {
-      return name.slice(0, -1);
-    }
-    return name;
+    // Use pluralize library to handle all singularization rules
+    return pluralize.singular(name);
   }
 
   /**

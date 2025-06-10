@@ -12,6 +12,7 @@ import { RelationshipProcessor } from "./RelationshipProcessor";
 import { RelationshipResolver } from "./RelationshipResolver";
 import { SystemFieldManager } from "./SystemFieldManager";
 import { TypeDefinitionGenerator } from "./TypeDefinitionGenerator";
+import pluralize from "pluralize";
 
 /**
  * Core schema processor that coordinates the schema conversion process
@@ -913,23 +914,10 @@ export class CoreSchemaProcessor {
   }
 
   /**
-   * Convert plural to singular (basic rules)
+   * Convert plural to singular using pluralize library
    */
   private makeSingular(name: string): string {
-    // Handle common plural endings
-    if (name.endsWith("ies")) {
-      return name.slice(0, -3) + "y";
-    } else if (name.endsWith("ses")) {
-      return name.slice(0, -2);
-    } else if (
-      name.endsWith("s") &&
-      !name.endsWith("ss") &&
-      !name.endsWith("us") &&
-      !name.endsWith("is")
-    ) {
-      return name.slice(0, -1);
-    }
-    return name;
+    return pluralize.singular(name);
   }
 
   /**
