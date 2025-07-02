@@ -52,19 +52,25 @@ export class TypeDefinitionGenerator {
     collectionName: string, 
     fields: DirectusField[],
     idType: string,
-    isJunctionTable: boolean
+    isJunctionTable: boolean,
+    primaryKeyField: string = 'id'
   ): void {
     const lines: string[] = [
       `export ${this.useTypes ? "type" : "interface"} ${typeName} ${this.useTypes ? "= " : ""}{`
     ];
     
-    // Start with ID field - all collections have an ID
-    lines.push(`  id: ${idType};`);
+    // Track if we've added the primary key field
+    let primaryKeyAdded = false;
     
     // Process each field
     for (const field of fields) {
-      // Skip the id field as we already added it
-      if (field.field === "id") continue;
+      // Check if this is the primary key field
+      if (field.field === primaryKeyField) {
+        // Add the primary key field first
+        lines.push(`  ${primaryKeyField}: ${idType};`);
+        primaryKeyAdded = true;
+        continue;
+      }
       
       // Skip UI presentation components and internal fields that aren't relevant for API usage
       const isUIComponent = 
@@ -101,6 +107,12 @@ export class TypeDefinitionGenerator {
       // For alias fields (like M2M), schema might be undefined, so default to optional
       const isOptional = !this.makeRequired && (field.schema?.is_nullable ?? true);
       lines.push(`  ${field.field}${isOptional ? "?" : ""}: ${fieldType};`);
+    }
+    
+    // If the primary key wasn't found in fields, add it (this can happen for system collections)
+    if (!primaryKeyAdded) {
+      // Insert the primary key at the beginning (after the opening brace)
+      lines.splice(1, 0, `  ${primaryKeyField}: ${idType};`);
     }
     
     lines.push(`}`);

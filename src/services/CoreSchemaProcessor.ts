@@ -179,6 +179,19 @@ export class CoreSchemaProcessor {
   }
 
   /**
+   * Get the primary key field name for a collection
+   */
+  private getPrimaryKeyField(collectionName: string): string {
+    // Find the field marked as primary key
+    const pkField = this.snapshot.data.fields.find(
+      field => field.collection === collectionName && field.schema?.is_primary_key === true
+    );
+    
+    // Return the field name, or default to 'id' if not found
+    return pkField?.field || 'id';
+  }
+
+  /**
    * Collect all alias fields for deferred processing
    */
   private collectAliasFields(): void {
@@ -455,16 +468,17 @@ export class CoreSchemaProcessor {
         }
       }
       
-      // Step 5: Always include the id field if it's not already present
-      if (!fieldNameSet.has('id')) {
-        // Create a synthetic id field
-        const idField = this.systemFieldManager.createSystemField(
+      // Step 5: Always include the primary key field if it's not already present
+      const primaryKeyField = this.getPrimaryKeyField(collectionName);
+      if (!fieldNameSet.has(primaryKeyField)) {
+        // Create a synthetic primary key field
+        const pkField = this.systemFieldManager.createSystemField(
           collectionName,
-          'id',
+          primaryKeyField,
           idType,
           true // isId
         );
-        fields.push(idField);
+        fields.push(pkField);
       }
     } else {
       // For regular collections, get all fields
@@ -486,13 +500,17 @@ export class CoreSchemaProcessor {
         rel.meta.one_collection_field === "collection"
       );
     
+    // Get the primary key field name
+    const primaryKeyField = this.getPrimaryKeyField(collectionName);
+    
     // Generate interface with the fields
     this.typeGenerator.generateInterfaceWithFields(
       typeName, 
       collectionName, 
       fields,
       idType,
-      isJunctionTable
+      isJunctionTable,
+      primaryKeyField
     );
   }
 
@@ -927,10 +945,13 @@ export class CoreSchemaProcessor {
       return this.collectionIdTypes.get(collectionName)!;
     }
     
-    // If we have fields data, check the actual ID field
+    // Get the primary key field name
+    const primaryKeyField = this.getPrimaryKeyField(collectionName);
+    
+    // If we have fields data, check the actual primary key field
     if (this.snapshot.data.fields) {
       const idField = this.snapshot.data.fields.find(
-        field => field.collection === collectionName && field.field === "id"
+        field => field.collection === collectionName && field.field === primaryKeyField
       );
       
       if (idField) {
