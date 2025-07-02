@@ -41,6 +41,12 @@ export class CoreSchemaProcessor {
   // Track processed collections to avoid duplication
   private processedCollections: Set<string> = new Set();
   
+  // Track system collections that have custom fields
+  private systemCollectionsWithCustomFields: Set<string> = new Set();
+  
+  // Track which collections are system collections
+  private systemCollections: Set<string> = new Set();
+  
   // System collections with ID type = number
   private readonly numberIdCollections = new Set([
     "directus_permissions",
@@ -176,6 +182,24 @@ export class CoreSchemaProcessor {
         };
       }
     }
+  }
+
+  /**
+   * Check if a system collection has custom fields
+   */
+  private hasCustomFields(collectionName: string): boolean {
+    if (!collectionName.startsWith('directus_')) return false;
+    
+    // Get the primary key field
+    const primaryKeyField = this.getPrimaryKeyField(collectionName);
+    
+    // Find all fields for this collection
+    const collectionFields = this.snapshot.data.fields.filter(
+      field => field.collection === collectionName
+    );
+    
+    // Check if there are any fields other than the primary key
+    return collectionFields.some(field => field.field !== primaryKeyField);
   }
 
   /**
@@ -336,6 +360,8 @@ export class CoreSchemaProcessor {
       const isSystemCollection = collection.collection.startsWith("directus_");
       
       if (isSystemCollection) {
+        // Track this as a system collection
+        this.systemCollections.add(collection.collection);
         // Generate system collection interface with system fields
         this.generateSystemCollectionInterface(collection);
       } else {
@@ -377,6 +403,9 @@ export class CoreSchemaProcessor {
       // Skip if already processed
       if (this.processedCollections.has(collectionName)) continue;
       
+      // Track this as a system collection
+      this.systemCollections.add(collectionName);
+      
       // Create a minimal collection object
       const collection = {
         collection: collectionName,
@@ -401,6 +430,11 @@ export class CoreSchemaProcessor {
    */
   private generateSystemCollectionInterface(collection: DirectusCollection): void {
     const collectionName = collection.collection;
+    
+    // Check if this system collection has custom fields
+    if (this.hasCustomFields(collectionName)) {
+      this.systemCollectionsWithCustomFields.add(collectionName);
+    }
     
     // Get the type name and ID type for this collection
     const typeName = this.getTypeNameForCollection(collectionName);
@@ -610,17 +644,35 @@ export class CoreSchemaProcessor {
     }
     
     // Get the system type definitions that should be included in the root interface
-    const systemTypes = 
-      this.options.includeSystemFields ? 
-      Array.from(this.typeGenerator.getTypeDefinitions().keys())
-        .filter(name => name.startsWith("Directus")) : 
-      [];
+    let systemTypesToInclude: Map<string, string> = new Map(); // typeName -> collectionName
+    
+    // Get all type definitions
+    const allTypes = this.typeGenerator.getTypeDefinitions();
+    
+    // Build a map of collection names to type names for system collections
+    for (const [typeName] of allTypes) {
+      // Check all our processed collections to find which type belongs to which collection
+      for (const collectionName of this.processedCollections) {
+        const expectedTypeName = this.getTypeNameForCollection(collectionName);
+        if (expectedTypeName === typeName && this.systemCollections.has(collectionName)) {
+          // This is a system collection type
+          if (this.options.includeSystemFields) {
+            // Include all system collections when includeSystemFields is true
+            systemTypesToInclude.set(typeName, collectionName);
+          } else if (this.systemCollectionsWithCustomFields.has(collectionName)) {
+            // Include only system collections with custom fields when includeSystemFields is false
+            systemTypesToInclude.set(typeName, collectionName);
+          }
+          break;
+        }
+      }
+    }
     
     // Generate the root interface
     this.typeGenerator.generateRootInterface(
       this.options.typeName,
       this.snapshot.data.collections,
-      systemTypes
+      Array.from(systemTypesToInclude.keys())
     );
   }
 
