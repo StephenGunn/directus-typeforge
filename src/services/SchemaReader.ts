@@ -89,7 +89,20 @@ export class SchemaReader {
   private static async readSnapshotFromFile(filePath: string): Promise<DirectusSchemaSnapshot> {
     try {
       const fileContent = await readFile(filePath, { encoding: "utf-8" });
-      return JSON.parse(fileContent) as DirectusSchemaSnapshot;
+      const parsed = JSON.parse(fileContent);
+      
+      // Handle both formats: with and without 'data' wrapper
+      // API format: { data: { version, directus, vendor, collections, fields, relations } }
+      // CLI format: { version, directus, vendor, collections, fields, relations }
+      if (parsed.data && typeof parsed.data === 'object' && 'collections' in parsed.data) {
+        // Already has data wrapper (API format)
+        return parsed as DirectusSchemaSnapshot;
+      } else if ('collections' in parsed && 'fields' in parsed && 'relations' in parsed) {
+        // CLI format - wrap it in data object
+        return { data: parsed } as DirectusSchemaSnapshot;
+      } else {
+        throw new Error('Invalid schema snapshot format: missing required properties');
+      }
     } catch (error) {
       if (error instanceof Error) {
         throw new Error(`Failed to read schema snapshot file: ${error.message}`);

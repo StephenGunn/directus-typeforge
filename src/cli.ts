@@ -24,7 +24,7 @@ const main = async (): Promise<void> => {
     .option("fieldsFile", {
       alias: "f",
       type: "string",
-      description: "Path to fields data file (from /fields endpoint)",
+      description: "Path to fields data file (from /fields endpoint) - provides additional field metadata for system collections",
     })
     .option("host", {
       alias: "h",

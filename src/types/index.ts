@@ -32,6 +32,10 @@ export type TypeDefinition = {
 
 /**
  * Schema snapshot as returned by the /schema/snapshot endpoint
+ * or from the CLI command: npx directus schema snapshot
+ * 
+ * The API endpoint returns the snapshot wrapped in a 'data' field,
+ * while the CLI generates it without the wrapper.
  */
 export type DirectusSchemaSnapshot = {
   data: {
