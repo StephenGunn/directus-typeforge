@@ -98,7 +98,8 @@ export class TypeDefinitionGenerator {
       
       // Generate field definition
       const fieldType = this.getTypeForField(field, collectionName, idType);
-      const isOptional = !this.makeRequired && field.schema.is_nullable;
+      // For alias fields (like M2M), schema might be undefined, so default to optional
+      const isOptional = !this.makeRequired && (field.schema?.is_nullable ?? true);
       lines.push(`  ${field.field}${isOptional ? "?" : ""}: ${fieldType};`);
     }
     
