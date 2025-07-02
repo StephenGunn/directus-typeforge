@@ -1,7 +1,6 @@
 import { systemFields, systemCollections } from "../config";
 import { TypeTracker } from "./TypeTracker";
 import { TypeNameManager } from "./TypeNameManager";
-import { SystemFieldDetector } from "./SystemFieldDetector";
 
 /**
  * Handles processing of system collections
@@ -9,7 +8,6 @@ import { SystemFieldDetector } from "./SystemFieldDetector";
 export class SystemCollectionManager {
   private typeTracker: TypeTracker;
   private typeNameManager: TypeNameManager;
-  private systemFieldDetector?: SystemFieldDetector;
   private options: {
     useTypes?: boolean;
     includeSystemFields?: boolean;
@@ -24,12 +22,10 @@ export class SystemCollectionManager {
       useTypes?: boolean;
       includeSystemFields?: boolean;
       makeRequired?: boolean;
-    },
-    systemFieldDetector?: SystemFieldDetector
+    }
   ) {
     this.typeTracker = typeTracker;
     this.typeNameManager = typeNameManager;
-    this.systemFieldDetector = systemFieldDetector;
     this.options = options || {
       useTypes: false,
       includeSystemFields: true,
@@ -59,13 +55,8 @@ export class SystemCollectionManager {
     
     // Case-insensitive check for directus_ prefix
     if (!collection.toLowerCase().startsWith("directus_")) return false;
-
-    // If we have a field detector, use it first
-    if (this.systemFieldDetector) {
-      return this.systemFieldDetector.isSystemField(collection, fieldName);
-    }
     
-    // Fallback to the configurable systemFields if no detector is available
+    // Use the configurable systemFields
     // Check both original and lowercase collection name in systemFields
     const lowerCollection = collection.toLowerCase();
     

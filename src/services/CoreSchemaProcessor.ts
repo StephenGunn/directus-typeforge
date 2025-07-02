@@ -7,7 +7,6 @@ import {
 } from "../types";
 import { toPascalCase } from "../utils/string";
 import { SYSTEM_FIELDS } from "../constants/system_fields";
-import { SystemFieldDetector } from "./SystemFieldDetector";
 import { RelationshipProcessor } from "./RelationshipProcessor";
 import { RelationshipResolver } from "./RelationshipResolver";
 import { SystemFieldManager } from "./SystemFieldManager";
@@ -55,8 +54,7 @@ export class CoreSchemaProcessor {
 
   constructor(
     snapshot: DirectusSchemaSnapshot, 
-    options: GenerateTypeScriptOptions,
-    private systemFieldDetector?: SystemFieldDetector
+    options: GenerateTypeScriptOptions
   ) {
     this.snapshot = snapshot;
     

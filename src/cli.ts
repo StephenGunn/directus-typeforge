@@ -21,11 +21,6 @@ const main = async (): Promise<void> => {
       type: "string",
       description: "Path to schema snapshot file",
     })
-    .option("fieldsFile", {
-      alias: "f",
-      type: "string",
-      description: "Path to fields data file (from /fields endpoint) - provides additional field metadata for system collections",
-    })
     .option("host", {
       alias: "h",
       type: "string",
@@ -178,7 +173,6 @@ const main = async (): Promise<void> => {
     spinner.text = "Reading schema...";
     const schema = await readSchema({
       snapshotFile: argv.snapshotFile,
-      fieldsFile: argv.fieldsFile,
       host: argv.host,
       email: argv.email,
       password: argv.password,
@@ -188,7 +182,6 @@ const main = async (): Promise<void> => {
     // Create options object for schema functions
     const schemaOptions = {
       snapshotFile: argv.snapshotFile,
-      fieldsFile: argv.fieldsFile,
       host: argv.host,
       email: argv.email,
       password: argv.password,

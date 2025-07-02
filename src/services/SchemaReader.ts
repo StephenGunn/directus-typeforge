@@ -2,8 +2,7 @@ import { readFile } from "fs/promises";
 import { z } from "zod";
 import type { 
   SchemaReadOptions, 
-  DirectusSchemaSnapshot, 
-  DirectusFieldsResponse 
+  DirectusSchemaSnapshot
 } from "../types";
 
 /**
@@ -52,36 +51,6 @@ export class SchemaReader {
     return this.fetchSchemaSnapshot(options.host, token);
   }
   
-  /**
-   * Read field data from a file or Directus server
-   */
-  static async readFields(options: SchemaReadOptions): Promise<DirectusFieldsResponse> {
-    // Read from file if specified
-    if (options.fieldsFile) {
-      return this.readFieldsFromFile(options.fieldsFile);
-    }
-    
-    // Otherwise, must have host to fetch from server
-    if (!options.host) {
-      throw new Error("Either fieldsFile or host must be provided.");
-    }
-    
-    // Get token for API access
-    let token: string;
-    if (options.token) {
-      token = options.token;
-    } else if (options.email && options.password) {
-      const loginResponse = await this.authenticate(options);
-      token = loginResponse.data.access_token;
-    } else {
-      throw new Error(
-        "Either token or both email and password must be provided for authentication."
-      );
-    }
-    
-    // Fetch fields from server
-    return this.fetchFields(options.host, token);
-  }
   
   /**
    * Read schema snapshot from a local file
@@ -168,43 +137,4 @@ export class SchemaReader {
     }
   }
   
-  /**
-   * Read fields data from a file
-   */
-  private static async readFieldsFromFile(filePath: string): Promise<DirectusFieldsResponse> {
-    try {
-      const fileContent = await readFile(filePath, { encoding: "utf-8" });
-      return JSON.parse(fileContent) as DirectusFieldsResponse;
-    } catch (error) {
-      if (error instanceof Error) {
-        throw new Error(`Failed to read fields file: ${error.message}`);
-      }
-      throw error;
-    }
-  }
-  
-  /**
-   * Fetch fields from Directus server
-   */
-  private static async fetchFields(host: string, token: string): Promise<DirectusFieldsResponse> {
-    try {
-      const response = await fetch(new URL("/fields", host), {
-        headers: {
-          "Authorization": `Bearer ${token}`,
-          "Content-Type": "application/json",
-        },
-      });
-
-      if (!response.ok) {
-        throw new Error(`Failed to fetch fields: ${response.statusText}`);
-      }
-
-      return await response.json() as DirectusFieldsResponse;
-    } catch (error) {
-      if (error instanceof Error) {
-        throw new Error(`Failed to fetch fields: ${error.message}`);
-      }
-      throw error;
-    }
-  }
 }

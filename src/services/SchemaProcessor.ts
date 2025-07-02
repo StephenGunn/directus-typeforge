@@ -2,7 +2,6 @@ import {
   DirectusSchemaSnapshot,
   GenerateTypeScriptOptions
 } from "../types";
-import { SystemFieldDetector } from "./SystemFieldDetector";
 import { CoreSchemaProcessor } from "./CoreSchemaProcessor";
 
 /**
@@ -14,10 +13,9 @@ export class SchemaProcessor {
   
   constructor(
     snapshot: DirectusSchemaSnapshot, 
-    options: GenerateTypeScriptOptions,
-    systemFieldDetector?: SystemFieldDetector
+    options: GenerateTypeScriptOptions
   ) {
-    this.processor = new CoreSchemaProcessor(snapshot, options, systemFieldDetector);
+    this.processor = new CoreSchemaProcessor(snapshot, options);
   }
 
   /**

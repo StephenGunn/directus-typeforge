@@ -3,7 +3,6 @@
  */
 export type SchemaReadOptions = {
   readonly snapshotFile?: string;  // Path to schema snapshot file
-  readonly fieldsFile?: string;    // Path to fields data file (from /fields endpoint)
   readonly host?: string;          // Directus host URL
   readonly email?: string;         // Email for authentication
   readonly password?: string;      // Password for authentication
@@ -151,55 +150,3 @@ export interface RelationshipInfo {
   junctionField?: string;
 }
 
-/**
- * Field metadata from the Directus /fields endpoint
- */
-export interface DirectusFieldMetadata {
-  collection: string;
-  field: string;
-  type: string;
-  schema: {
-    name: string;
-    table: string;
-    data_type: string;
-    default_value: unknown;
-    max_length: number | null;
-    numeric_precision: number | null;
-    numeric_scale: number | null;
-    is_generated: boolean;
-    generation_expression: string | null;
-    is_nullable: boolean;
-    is_unique: boolean;
-    is_indexed: boolean;
-    is_primary_key: boolean;
-    has_auto_increment: boolean;
-    foreign_key_column: string | null;
-    foreign_key_table: string | null;
-  };
-  meta: {
-    system: boolean;
-    collection: string;
-    field: string;
-    special?: string[];
-    interface?: string;
-    options?: unknown;
-    display?: string | null;
-    display_options?: unknown;
-    readonly: boolean;
-    hidden: boolean;
-    sort: number;
-    width: string;
-    group: string | null;
-    translations: unknown | null;
-    note: string | null;
-    conditions: unknown | null;
-    required: boolean;
-  };
-}
-
-/**
- * Response from the Directus /fields endpoint
- */
-export interface DirectusFieldsResponse {
-  data: DirectusFieldMetadata[];
-}

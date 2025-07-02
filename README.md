@@ -61,7 +61,6 @@ directus-typeforge [options]
 | Option                  | Alias | Description                                       | Default          |
 | ----------------------- | ----- | ------------------------------------------------- | ---------------- |
 | `--snapshotFile`        | `-i`  | Path to schema snapshot file                      | -                |
-| `--fieldsFile`          | `-f`  | Path to fields data file (from /fields endpoint)  | -                |
 | `--host`                | `-h`  | Directus host URL                                 | -                |
 | `--email`               | `-e`  | Email for authentication                          | -                |
 | `--password`            | `-p`  | Password for authentication                       | -                |
@@ -103,8 +102,6 @@ npx directus-typeforge --host https://example.com --email user@example.com --pas
 # From a Live Server with token
 npx directus-typeforge --host https://example.com --token your-static-token -o schema.ts
 
-# With dynamic system field detection
-npx directus-typeforge -i schema-snapshot.json -f all-fields.json -o ./types/schema.ts
 
 # Custom Root Type Name
 npx directus-typeforge -i schema-snapshot.json --typeName MySchema > schema.ts
