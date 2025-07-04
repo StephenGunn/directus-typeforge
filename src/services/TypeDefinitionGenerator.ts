@@ -62,13 +62,17 @@ export class TypeDefinitionGenerator {
     // Track if we've added the primary key field
     let primaryKeyAdded = false;
     
+    // First, find and add the primary key field
+    const pkField = fields.find(f => f.field === primaryKeyField);
+    if (pkField) {
+      lines.push(`  ${primaryKeyField}: ${idType};`);
+      primaryKeyAdded = true;
+    }
+    
     // Process each field
     for (const field of fields) {
-      // Check if this is the primary key field
+      // Skip the primary key field since we already added it
       if (field.field === primaryKeyField) {
-        // Add the primary key field first
-        lines.push(`  ${primaryKeyField}: ${idType};`);
-        primaryKeyAdded = true;
         continue;
       }
       
