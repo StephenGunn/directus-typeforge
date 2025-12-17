@@ -18,6 +18,8 @@ export type GenerateTypeScriptOptions = {
   useTypes?: boolean;              // Use 'type' instead of 'interface'
   makeRequired?: boolean;          // Make all fields required (no optional '?' syntax)
   includeSystemFields?: boolean;   // Include all system fields in system collections
+  exportSystemCollections?: boolean; // Export system collections in root schema (enables relationship types)
+  resolveSystemRelations?: boolean; // Resolve system collection internal relationships (e.g. directus_files.folder -> DirectusFolder)
   addTypedocNotes?: boolean;       // Add JSDoc comments from field notes
 };
 

@@ -77,6 +77,18 @@ const main = async (): Promise<void> => {
       description: "Include all system fields in system collections",
       default: true,
     })
+    .option("exportSystemCollections", {
+      alias: "x",
+      type: "boolean",
+      description: "Export system collections in root schema",
+      default: true,
+    })
+    .option("resolveSystemRelations", {
+      alias: "y",
+      type: "boolean",
+      description: "Resolve system collection internal relationships (e.g. directus_files.folder -> DirectusFolder)",
+      default: true,
+    })
     .option("addTypedocNotes", {
       alias: "d",
       type: "boolean",
@@ -191,13 +203,15 @@ const main = async (): Promise<void> => {
     // Generate TypeScript types with dynamic system field detection
     spinner.text = "Generating TypeScript types...";
     const ts = await generateTypeScript(
-      schema, 
+      schema,
       {
         typeName: argv.typeName,
         useTypeReferences: argv.useTypeReferences,
         useTypes: argv.useTypes,
         makeRequired: argv.makeRequired,
         includeSystemFields: argv.includeSystemFields,
+        exportSystemCollections: argv.exportSystemCollections,
+        resolveSystemRelations: argv.resolveSystemRelations,
         addTypedocNotes: argv.addTypedocNotes,
       },
       schemaOptions

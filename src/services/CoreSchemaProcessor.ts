@@ -11,6 +11,7 @@ import { RelationshipProcessor } from "./RelationshipProcessor";
 import { RelationshipResolver } from "./RelationshipResolver";
 import { SystemFieldManager } from "./SystemFieldManager";
 import { TypeDefinitionGenerator } from "./TypeDefinitionGenerator";
+import { systemRelations } from "../config";
 import pluralize from "pluralize";
 
 /**
@@ -71,6 +72,8 @@ export class CoreSchemaProcessor {
       useTypes: options.useTypes ?? false,
       makeRequired: options.makeRequired ?? true,
       includeSystemFields: options.includeSystemFields ?? true,
+      exportSystemCollections: options.exportSystemCollections ?? true,
+      resolveSystemRelations: options.resolveSystemRelations ?? true,
       addTypedocNotes: options.addTypedocNotes ?? true,
     };
     
@@ -103,7 +106,10 @@ export class CoreSchemaProcessor {
     
     // Analyze explicit relationships from the schema
     this.analyzeRelationships();
-    
+
+    // Apply system collection relationships as fallbacks
+    this.applySystemRelations();
+
     // Process all alias fields AFTER we have a complete relationship graph
     this.resolveAliasFields();
     
@@ -247,12 +253,52 @@ export class CoreSchemaProcessor {
    */
   private analyzeRelationships(): void {
     if (!this.snapshot.data.relations) return;
-    
+
     // Process all relations through the RelationshipProcessor
     this.relationshipProcessor.processRelations(
       this.snapshot.data.relations,
       (collectionName) => this.getTypeNameForCollection(collectionName)
     );
+  }
+
+  /**
+   * Apply system collection relationships as fallbacks
+   *
+   * Directus doesn't include relations for internal system collection fields in the schema snapshot.
+   * This method adds known system collection relationships (e.g. directus_files.folder -> directus_folders)
+   * only if they don't already exist in the schema.
+   */
+  private applySystemRelations(): void {
+    // Skip if the option is disabled
+    if (!this.options.resolveSystemRelations) return;
+
+    console.log("\n====== Applying system collection relationships ======\n");
+
+    for (const sysRel of systemRelations) {
+      // Check if this relationship already exists
+      const existing = this.relationshipProcessor.getRelationshipForField(
+        sysRel.collection,
+        sysRel.field
+      );
+
+      if (existing) {
+        console.log(`  Skipping ${sysRel.collection}.${sysRel.field} - already defined in schema`);
+        continue;
+      }
+
+      // Add the system relationship as a fallback
+      this.relationshipProcessor.addRelationship(
+        sysRel.collection,
+        sysRel.field,
+        RelationshipType.ManyToOne,
+        sysRel.relatedCollection,
+        this.getTypeNameForCollection(sysRel.relatedCollection)
+      );
+
+      console.log(`  Added system relationship: ${sysRel.collection}.${sysRel.field} -> ${sysRel.relatedCollection}`);
+    }
+
+    console.log(`\nApplied ${systemRelations.length} system collection relationships\n`);
   }
 
   /**
@@ -656,7 +702,10 @@ export class CoreSchemaProcessor {
         const expectedTypeName = this.getTypeNameForCollection(collectionName);
         if (expectedTypeName === typeName && this.systemCollections.has(collectionName)) {
           // This is a system collection type
-          if (this.options.includeSystemFields) {
+          if (this.options.exportSystemCollections) {
+            // Include all system collections when exportSystemCollections is true
+            systemTypesToInclude.set(typeName, collectionName);
+          } else if (this.options.includeSystemFields) {
             // Include all system collections when includeSystemFields is true
             systemTypesToInclude.set(typeName, collectionName);
           } else if (this.systemCollectionsWithCustomFields.has(collectionName)) {

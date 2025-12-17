@@ -8,6 +8,7 @@ import { systemFields } from './system-fields';
 import { systemCollections } from './system-collections';
 import { relationshipPatterns } from './relationship-patterns';
 import { fieldTypeMapping } from './field-types';
+import { systemRelations } from './system-relations';
 
 // Default values for CLI options
 export const DEFAULT_OPTIONS = {
@@ -16,6 +17,8 @@ export const DEFAULT_OPTIONS = {
   USE_TYPES: false,
   MAKE_REQUIRED: false,
   INCLUDE_SYSTEM_FIELDS: true,
+  EXPORT_SYSTEM_COLLECTIONS: true,
+  RESOLVE_SYSTEM_RELATIONS: true,
   ADD_TYPEDOC_NOTES: false,
 };
 
@@ -72,4 +75,5 @@ export {
   systemCollections,
   relationshipPatterns,
   fieldTypeMapping,
+  systemRelations,
 };

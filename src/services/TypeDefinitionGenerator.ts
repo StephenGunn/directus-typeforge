@@ -1,6 +1,7 @@
 import { DirectusCollection, DirectusField, TypeDefinition } from "../types";
 import { RelationshipProcessor } from "./RelationshipProcessor";
 import { SystemFieldManager } from "./SystemFieldManager";
+import { OUTPUT_CONFIG } from "../config";
 
 /**
  * Generates TypeScript type definitions for collections
@@ -326,11 +327,13 @@ export class TypeDefinitionGenerator {
    */
   buildOutput(mainTypeName: string): string {
     const output: string[] = [];
-    
+
     // Add comment header
     output.push("/**");
     output.push(" * Generated TypeScript types for Directus Schema");
-    output.push(" * Generated on: " + new Date().toISOString());
+    if (OUTPUT_CONFIG.INCLUDE_TIMESTAMP) {
+      output.push(" * Generated on: " + new Date().toISOString());
+    }
     output.push(" */\n");
     
     // Add all type definitions in order:
