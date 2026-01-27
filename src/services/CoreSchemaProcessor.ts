@@ -71,12 +71,13 @@ export class CoreSchemaProcessor {
       useTypeReferences: options.useTypeReferences ?? true,
       useTypes: options.useTypes ?? false,
       makeRequired: options.makeRequired ?? true,
+      includeNullables: options.includeNullables ?? false,
       includeSystemFields: options.includeSystemFields ?? true,
       exportSystemCollections: options.exportSystemCollections ?? true,
       resolveSystemRelations: options.resolveSystemRelations ?? true,
       addTypedocNotes: options.addTypedocNotes ?? true,
     };
-    
+
     // Initialize component managers
     this.relationshipProcessor = new RelationshipProcessor();
     this.systemFieldManager = new SystemFieldManager();
@@ -86,6 +87,7 @@ export class CoreSchemaProcessor {
       {
         useTypes: this.options.useTypes,
         makeRequired: this.options.makeRequired,
+        includeNullables: this.options.includeNullables,
         addTypedocNotes: this.options.addTypedocNotes
       }
     );

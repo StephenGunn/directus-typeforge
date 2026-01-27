@@ -34,7 +34,7 @@ const targetFile = `${TYPES_DIR}/${OUT_FILE}`;
     : '';
 
   // Build the command string - use node to run the local build directly
-  const command = `node ${cliPath} --host ${DIRECTUS_URL} -u true --email ${ADMIN_EMAIL} --password ${ADMIN_PASSWORD} --typeName ApiCollections --outFile ${targetFile} -m true -s true ${additionalArgs}`;
+  const command = `node ${cliPath} --host ${DIRECTUS_URL} -u true --email ${ADMIN_EMAIL} --password ${ADMIN_PASSWORD} --typeName ApiCollections --outFile ${targetFile} -m true -l true -s true ${additionalArgs}`;
 
   console.log(`- ${command}`);
 

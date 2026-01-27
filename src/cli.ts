@@ -71,6 +71,12 @@ const main = async (): Promise<void> => {
       description: "Make all fields required (no optional '?' syntax)",
       default: true,
     })
+    .option("includeNullables", {
+      alias: "l",
+      type: "boolean",
+      description: "Add '| null' union for nullable fields",
+      default: false,
+    })
     .option("includeSystemFields", {
       alias: "s",
       type: "boolean",
@@ -148,6 +154,10 @@ const main = async (): Promise<void> => {
       "Generate types with JSDoc comments from field notes",
     )
     .example(
+      "$0 -i ./schema-snapshot.json -l -o ./types/schema.d.ts",
+      "Generate types with '| null' union for nullable fields",
+    )
+    .example(
       "$0 -i ./schema-snapshot.json -f ./all-fields.json -o ./types/schema.d.ts",
       "Generate types using dynamic system field detection from a fields file",
     )
@@ -209,6 +219,7 @@ const main = async (): Promise<void> => {
         useTypeReferences: argv.useTypeReferences,
         useTypes: argv.useTypes,
         makeRequired: argv.makeRequired,
+        includeNullables: argv.includeNullables,
         includeSystemFields: argv.includeSystemFields,
         exportSystemCollections: argv.exportSystemCollections,
         resolveSystemRelations: argv.resolveSystemRelations,

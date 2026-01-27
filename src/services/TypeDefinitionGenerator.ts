@@ -12,15 +12,17 @@ export class TypeDefinitionGenerator {
   private systemFieldManager: SystemFieldManager;
   private useTypes: boolean;
   private makeRequired: boolean;
+  private includeNullables: boolean;
   private addTypedocNotes: boolean;
   private collectionIdTypes: Map<string, "string" | "number"> = new Map();
-  
+
   constructor(
     relationshipProcessor: RelationshipProcessor,
     systemFieldManager: SystemFieldManager,
     options: {
       useTypes: boolean;
       makeRequired: boolean;
+      includeNullables: boolean;
       addTypedocNotes: boolean;
     }
   ) {
@@ -28,6 +30,7 @@ export class TypeDefinitionGenerator {
     this.systemFieldManager = systemFieldManager;
     this.useTypes = options.useTypes;
     this.makeRequired = options.makeRequired;
+    this.includeNullables = options.includeNullables;
     this.addTypedocNotes = options.addTypedocNotes;
   }
   
@@ -106,11 +109,18 @@ export class TypeDefinitionGenerator {
       if (this.addTypedocNotes && field.meta?.note) {
         lines.push(`  /** ${field.meta.note} */`);
       }
-      
+
       // Generate field definition
-      const fieldType = this.getTypeForField(field, collectionName, idType);
+      let fieldType = this.getTypeForField(field, collectionName, idType);
       // For alias fields (like M2M), schema might be undefined, so default to optional
-      const isOptional = !this.makeRequired && (field.schema?.is_nullable ?? true);
+      const isNullable = field.schema?.is_nullable ?? true;
+      const isOptional = !this.makeRequired && isNullable;
+
+      // Add | null union if includeNullables is enabled and field is nullable
+      if (this.includeNullables && isNullable) {
+        fieldType = `${fieldType} | null`;
+      }
+
       lines.push(`  ${field.field}${isOptional ? "?" : ""}: ${fieldType};`);
     }
     
