@@ -43,34 +43,6 @@ export const TYPE_MAPPING = {
   timestamptz: '\'datetime\'',
 };
 
-// Pattern matchers for detecting time-related fields by name
-export const DATETIME_FIELD_PATTERNS = [
-  /^date_/i,
-  /^datetime_/i,
-  /^time_/i,
-  /^timestamp_/i,
-  /_date$/i,
-  /_datetime$/i,
-  /_time$/i,
-  /_at$/i,
-  /_timestamp$/i,
-];
-
-// Specific field names that should always be treated as datetime
-export const DATETIME_FIELD_NAMES = [
-  'created_at',
-  'updated_at',
-  'date_created',
-  'date_updated',
-  'published_at',
-  'modified_at',
-  'last_access',
-  'last_modified',
-  'timestamp',
-];
-
 export const fieldTypeMapping = {
   TYPE_MAPPING,
-  DATETIME_FIELD_PATTERNS,
-  DATETIME_FIELD_NAMES,
 };

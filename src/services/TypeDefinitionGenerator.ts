@@ -191,28 +191,6 @@ export class TypeDefinitionGenerator {
         return "'datetime'"; // Literal 'datetime' for Directus SDK compatibility
       }
       
-      // Check field name patterns that commonly indicate datetime values
-      const timeRelatedFieldNames = [
-        'day', 'date', 'time', 'datetime', 'timestamp',
-        'start', 'end', 'begin', 'finish',
-        'created', 'modified', 'updated',
-        'scheduled', 'published', 'expired',
-        'due', 'deadline'
-      ];
-      
-      // Check standard Directus metadata date fields explicitly
-      const directusDateFields = ['date_created', 'date_updated', 'user_created', 'user_updated'];
-      if (directusDateFields.includes(field.field)) {
-        return field.field.startsWith('user_') ? 'string' : "'datetime'";
-      }
-      
-      // Check if the field name matches time patterns
-      if (timeRelatedFieldNames.some(name => 
-          field.field === name || 
-          field.field.startsWith(name + '_') || 
-          field.field.endsWith('_' + name))) {
-        return "'datetime'";
-      }
     }
     
     // Map Directus types to TypeScript types
