@@ -74,6 +74,7 @@ directus-typeforge [options]
 | `--exportSystemCollections` | `-x`  | Export system collections in root schema                                   | `true`           |
 | `--resolveSystemRelations`  | `-y`  | Resolve system collection relationships (e.g. directus_files.folder)       | `true`           |
 | `--addTypedocNotes`         | `-d`  | Add JSDoc comments from field notes                                        | `true`           |
+| `--timestamp`               |       | Include generation timestamp in output header                              | `false`          |
 | `--debug`                   |       | Enable debug logging                                                       | `false`          |
 | `--logLevel`                |       | Set log level (error, warn, info, debug, trace)                            | `info`           |
 | `--logFile`                 |       | Path to write debug logs                                                   |                  |
@@ -123,6 +124,9 @@ npx directus-typeforge -i schema-snapshot.json --addTypedocNotes=false -o ./type
 
 # Generate using 'type' instead of 'interface'
 npx directus-typeforge -i schema-snapshot.json -u -o ./types/schema.ts
+
+# Include generation timestamp in output header
+npx directus-typeforge -i schema-snapshot.json --timestamp -o ./types/schema.ts
 
 # Enable debug logging to troubleshoot issues
 npx directus-typeforge -i schema-snapshot.json --debug --logLevel debug --logFile ./typeforge-debug.log -o ./types/schema.ts
@@ -293,9 +297,16 @@ The logs contain detailed information about:
 
 ## Configuration
 
-TypeForge provides configuration options in `src/config/index.ts` for programmatic use:
+By default, TypeForge excludes timestamps from generated files to avoid unnecessary version control changes when the schema hasn't changed. Use the `--timestamp` flag if you want to include generation timestamps:
 
-- `OUTPUT_CONFIG.INCLUDE_TIMESTAMP`: Set to `false` to exclude timestamps from generated files (useful for version control)
+```bash
+# Include timestamp in output header
+npx directus-typeforge -i schema-snapshot.json --timestamp -o ./types/schema.ts
+```
+
+For programmatic use, configuration options are available in `src/config/index.ts`:
+
+- `OUTPUT_CONFIG.INCLUDE_TIMESTAMP`: Controls whether timestamps are included (default: `false`)
 - `DEFAULT_OPTIONS`: Control default CLI option values
 
 ## Caveats

@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.19.0
+
+### Features
+
+- **Timestamp control**: Added `--timestamp` CLI flag to optionally include generation timestamp in output header
+  - Timestamps are now excluded by default to avoid unnecessary version control changes
+  - Use `--timestamp` flag to include the timestamp when needed
+
 ## 0.15.0 (2025-06-10)
 
 ### Breaking Changes
