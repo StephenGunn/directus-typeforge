@@ -1,7 +1,6 @@
 import { DirectusCollection, DirectusField, TypeDefinition } from "../types";
 import { RelationshipProcessor } from "./RelationshipProcessor";
 import { SystemFieldManager } from "./SystemFieldManager";
-import { OUTPUT_CONFIG } from "../config";
 
 /**
  * Generates TypeScript type definitions for collections
@@ -14,6 +13,7 @@ export class TypeDefinitionGenerator {
   private makeRequired: boolean;
   private includeNullables: boolean;
   private addTypedocNotes: boolean;
+  private includeTimestamp: boolean;
   private collectionIdTypes: Map<string, "string" | "number"> = new Map();
 
   constructor(
@@ -24,6 +24,7 @@ export class TypeDefinitionGenerator {
       makeRequired: boolean;
       includeNullables: boolean;
       addTypedocNotes: boolean;
+      includeTimestamp: boolean;
     }
   ) {
     this.relationshipProcessor = relationshipProcessor;
@@ -32,6 +33,7 @@ export class TypeDefinitionGenerator {
     this.makeRequired = options.makeRequired;
     this.includeNullables = options.includeNullables;
     this.addTypedocNotes = options.addTypedocNotes;
+    this.includeTimestamp = options.includeTimestamp;
   }
   
   /**
@@ -319,7 +321,7 @@ export class TypeDefinitionGenerator {
     // Add comment header
     output.push("/**");
     output.push(" * Generated TypeScript types for Directus Schema");
-    if (OUTPUT_CONFIG.INCLUDE_TIMESTAMP) {
+    if (this.includeTimestamp) {
       output.push(" * Generated on: " + new Date().toISOString());
     }
     output.push(" */\n");

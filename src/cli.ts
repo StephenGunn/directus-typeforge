@@ -101,6 +101,11 @@ const main = async (): Promise<void> => {
       description: "Add JSDoc comments from field notes",
       default: true,
     })
+    .option("timestamp", {
+      type: "boolean",
+      description: "Include generation timestamp in output header",
+      default: false,
+    })
     .option("debug", {
       type: "boolean",
       description: "Enable debug logging",
@@ -224,6 +229,7 @@ const main = async (): Promise<void> => {
         exportSystemCollections: argv.exportSystemCollections,
         resolveSystemRelations: argv.resolveSystemRelations,
         addTypedocNotes: argv.addTypedocNotes,
+        includeTimestamp: argv.timestamp,
       },
       schemaOptions
     );

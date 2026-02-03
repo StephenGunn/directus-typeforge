@@ -25,7 +25,7 @@ export const DEFAULT_OPTIONS = {
 // Output configuration
 export const OUTPUT_CONFIG = {
   ENCODING: 'utf8',
-  INCLUDE_TIMESTAMP: true,
+  INCLUDE_TIMESTAMP: false,
   HEADER_TEMPLATE: '/**\n * Generated TypeScript types for Directus\n * Generated at: {timestamp}\n */\n\n',
 };
 

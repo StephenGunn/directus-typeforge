@@ -76,6 +76,7 @@ export class CoreSchemaProcessor {
       exportSystemCollections: options.exportSystemCollections ?? true,
       resolveSystemRelations: options.resolveSystemRelations ?? true,
       addTypedocNotes: options.addTypedocNotes ?? true,
+      includeTimestamp: options.includeTimestamp ?? false,
     };
 
     // Initialize component managers
@@ -88,7 +89,8 @@ export class CoreSchemaProcessor {
         useTypes: this.options.useTypes,
         makeRequired: this.options.makeRequired,
         includeNullables: this.options.includeNullables,
-        addTypedocNotes: this.options.addTypedocNotes
+        addTypedocNotes: this.options.addTypedocNotes,
+        includeTimestamp: this.options.includeTimestamp
       }
     );
   }
