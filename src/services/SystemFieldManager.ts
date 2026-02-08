@@ -58,6 +58,10 @@ export class SystemFieldManager {
       case 'timestamp':
         return "'datetime'";
       
+      // Tags field - returns string array
+      case 'tags':
+        return 'json'; // Will be typed as string[] via interface detection
+
       // Object fields
       case 'auth_data':
       case 'appearance':
@@ -65,7 +69,6 @@ export class SystemFieldManager {
       case 'theme_light':
       case 'theme_light_overrides':
       case 'theme_dark_overrides':
-      case 'tags':
       case 'metadata':
       case 'options':
       case 'translations':
@@ -107,10 +110,12 @@ export class SystemFieldManager {
     let actualType = fieldType;
     let dataType = fieldType;
     
-    // Set appropriate special values for date fields
+    // Set appropriate special values and interface for specific fields
+    let fieldInterface = 'input';
+
     if (fieldName === 'date_created') {
       special = ['date-created'];
-      actualType = 'datetime'; 
+      actualType = 'datetime';
       dataType = 'datetime';
     } else if (fieldName === 'date_updated') {
       special = ['date-updated'];
@@ -120,8 +125,14 @@ export class SystemFieldManager {
       special = ['m2o'];
       actualType = 'alias';
       dataType = 'alias';
+    } else if (fieldName === 'tags') {
+      // Tags field is a JSON array of strings with the "tags" interface
+      special = ['cast-json'];
+      actualType = 'json';
+      dataType = 'json';
+      fieldInterface = 'tags';
     }
-    
+
     return {
       collection: collectionName,
       field: fieldName,
@@ -130,7 +141,7 @@ export class SystemFieldManager {
         collection: collectionName,
         field: fieldName,
         hidden: false,
-        interface: 'input',
+        interface: fieldInterface,
         special: special,
         system: true
       },

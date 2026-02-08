@@ -161,15 +161,21 @@ export class TypeDefinitionGenerator {
     if (field.meta?.special) {
       // Handle M2M fields marked with special "m2m"
       if (Array.isArray(field.meta.special) && field.meta.special.includes("m2m")) {
-        // First, check if the field has junction information 
+        // First, check if the field has junction information
         if (field.meta.junction_collection && typeof field.meta.junction_collection === 'string') {
           return `string[] | ${field.meta.junction_collection}[]`;
         }
-        
+
         // If we can't determine the junction, default to string array
         return "string[]";
       }
-      
+
+      // Handle tags fields (interface "tags" with cast-json special) - these are string arrays
+      if (field.meta.interface === "tags" ||
+          (Array.isArray(field.meta.special) && field.meta.special.includes("cast-json") && field.meta.interface === "tags")) {
+        return "string[]";
+      }
+
       // Handle JSON fields
       if ((Array.isArray(field.meta.special) && field.meta.special.includes("json")) || field.type === "json") {
         return "Record<string, unknown>";
