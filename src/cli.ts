@@ -106,6 +106,15 @@ const main = async (): Promise<void> => {
       description: "Include generation timestamp in output header",
       default: false,
     })
+    .option("typeMappings", {
+      type: "string",
+      description: "Custom collection-to-type mappings (e.g. kurs:Kurs,ausweis:Ausweis)",
+    })
+    .option("noSingularize", {
+      type: "boolean",
+      description: "Disable automatic singularization of collection names",
+      default: false,
+    })
     .option("debug", {
       type: "boolean",
       description: "Enable debug logging",
@@ -215,6 +224,17 @@ const main = async (): Promise<void> => {
       token: argv.token,
     };
 
+    // Parse type mappings from CLI string format (e.g. "kurs:Kurs,kurse:Kurse")
+    const typeMappings: Record<string, string> = {};
+    if (argv.typeMappings) {
+      for (const pair of argv.typeMappings.split(",")) {
+        const [collection, typeName] = pair.split(":");
+        if (collection && typeName) {
+          typeMappings[collection.trim()] = typeName.trim();
+        }
+      }
+    }
+
     // Generate TypeScript types with dynamic system field detection
     spinner.text = "Generating TypeScript types...";
     const ts = await generateTypeScript(
@@ -230,6 +250,8 @@ const main = async (): Promise<void> => {
         resolveSystemRelations: argv.resolveSystemRelations,
         addTypedocNotes: argv.addTypedocNotes,
         includeTimestamp: argv.timestamp,
+        typeMappings: Object.keys(typeMappings).length > 0 ? typeMappings : undefined,
+        noSingularize: argv.noSingularize,
       },
       schemaOptions
     );

@@ -77,6 +77,8 @@ export class CoreSchemaProcessor {
       resolveSystemRelations: options.resolveSystemRelations ?? true,
       addTypedocNotes: options.addTypedocNotes ?? true,
       includeTimestamp: options.includeTimestamp ?? false,
+      typeMappings: options.typeMappings ?? {},
+      noSingularize: options.noSingularize ?? false,
     };
 
     // Initialize component managers
@@ -1013,6 +1015,13 @@ export class CoreSchemaProcessor {
       return typeName;
     }
     
+    // Check custom type mappings first
+    if (this.options.typeMappings && collectionName in this.options.typeMappings) {
+      const typeName = this.options.typeMappings[collectionName];
+      this.collectionTypes.set(collectionName, typeName);
+      return typeName;
+    }
+
     // For regular collections, convert to PascalCase singular (unless it's a singleton)
     const isSingletonCollection = this.isSingleton(collectionName);
     const pascalName = toPascalCase(collectionName);
@@ -1038,6 +1047,7 @@ export class CoreSchemaProcessor {
    * Convert plural to singular using pluralize library
    */
   private makeSingular(name: string): string {
+    if (this.options.noSingularize) return name;
     return pluralize.singular(name);
   }
 

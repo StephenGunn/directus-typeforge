@@ -58,26 +58,28 @@ directus-typeforge [options]
 
 ## Available Options
 
-| Option                      | Alias | Description                                                                | Default          |
-| --------------------------- | ----- | -------------------------------------------------------------------------- | ---------------- |
-| `--snapshotFile`            | `-i`  | Path to schema snapshot file                                               | -                |
-| `--host`                    | `-h`  | Directus host URL                                                          | -                |
-| `--email`                   | `-e`  | Email for authentication                                                   | -                |
-| `--password`                | `-p`  | Password for authentication                                                | -                |
-| `--token`                   | `-t`  | Admin bearer token for authentication                                      | -                |
-| `--outFile`                 | `-o`  | Output file for TypeScript types                                           | -                |
-| `--typeName`                | `-n`  | Root type name                                                             | `ApiCollections` |
-| `--useTypeReferences`       | `-r`  | Use interface references for relation types                                | `true`           |
-| `--useTypes`                | `-u`  | Use 'type' instead of 'interface'                                          | `false`          |
-| `--makeRequired`            | `-m`  | Make all fields required (no optional '?' syntax)                          | `true`           |
-| `--includeSystemFields`     | `-s`  | Include all system fields in system collections                            | `true`           |
-| `--exportSystemCollections` | `-x`  | Export system collections in root schema                                   | `true`           |
-| `--resolveSystemRelations`  | `-y`  | Resolve system collection relationships (e.g. directus_files.folder)       | `true`           |
-| `--addTypedocNotes`         | `-d`  | Add JSDoc comments from field notes                                        | `true`           |
-| `--timestamp`               |       | Include generation timestamp in output header                              | `false`          |
-| `--debug`                   |       | Enable debug logging                                                       | `false`          |
-| `--logLevel`                |       | Set log level (error, warn, info, debug, trace)                            | `info`           |
-| `--logFile`                 |       | Path to write debug logs                                                   |                  |
+| Option                      | Alias | Description                                                               | Default          |
+| --------------------------- | ----- | ------------------------------------------------------------------------- | ---------------- |
+| `--snapshotFile`            | `-i`  | Path to schema snapshot file                                              | -                |
+| `--host`                    | `-h`  | Directus host URL                                                         | -                |
+| `--email`                   | `-e`  | Email for authentication                                                  | -                |
+| `--password`                | `-p`  | Password for authentication                                               | -                |
+| `--token`                   | `-t`  | Admin bearer token for authentication                                     | -                |
+| `--outFile`                 | `-o`  | Output file for TypeScript types                                          | -                |
+| `--typeName`                | `-n`  | Root type name                                                            | `ApiCollections` |
+| `--useTypeReferences`       | `-r`  | Use interface references for relation types                               | `true`           |
+| `--useTypes`                | `-u`  | Use 'type' instead of 'interface'                                         | `false`          |
+| `--makeRequired`            | `-m`  | Make all fields required (no optional '?' syntax)                         | `true`           |
+| `--includeSystemFields`     | `-s`  | Include all system fields in system collections                           | `true`           |
+| `--exportSystemCollections` | `-x`  | Export system collections in root schema                                  | `true`           |
+| `--resolveSystemRelations`  | `-y`  | Resolve system collection relationships (e.g. directus_files.folder)      | `true`           |
+| `--addTypedocNotes`         | `-d`  | Add JSDoc comments from field notes                                       | `true`           |
+| `--typeMappings`            |       | Custom collection-to-type mappings (e.g. `kurs:Kurs,ausweis:Ausweis`)     | -                |
+| `--noSingularize`           |       | Disable automatic singularization of collection names                     | `false`          |
+| `--timestamp`               |       | Include generation timestamp in output header                             | `false`          |
+| `--debug`                   |       | Enable debug logging                                                      | `false`          |
+| `--logLevel`                |       | Set log level (error, warn, info, debug, trace)                           | `info`           |
+| `--logFile`                 |       | Path to write debug logs                                                  |                  |
 
 **only disable `--useTypeReferences` for very specific debugging, it will make
 all of your relational types break.**
@@ -127,6 +129,12 @@ npx directus-typeforge -i schema-snapshot.json -u -o ./types/schema.ts
 
 # Include generation timestamp in output header
 npx directus-typeforge -i schema-snapshot.json --timestamp -o ./types/schema.ts
+
+# Custom type mappings (useful for non-English collection names)
+npx directus-typeforge -i schema-snapshot.json --typeMappings "kurs:Kurs,ausweis:Ausweis" -o ./types/schema.ts
+
+# Disable singularization entirely (useful for non-English projects)
+npx directus-typeforge -i schema-snapshot.json --noSingularize -o ./types/schema.ts
 
 # Enable debug logging to troubleshoot issues
 npx directus-typeforge -i schema-snapshot.json --debug --logLevel debug --logFile ./typeforge-debug.log -o ./types/schema.ts

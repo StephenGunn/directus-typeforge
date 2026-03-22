@@ -23,6 +23,8 @@ export type GenerateTypeScriptOptions = {
   resolveSystemRelations?: boolean; // Resolve system collection internal relationships (e.g. directus_files.folder -> DirectusFolder)
   addTypedocNotes?: boolean;       // Add JSDoc comments from field notes
   includeTimestamp?: boolean;      // Include generation timestamp in output header (default: false)
+  typeMappings?: Record<string, string>; // Custom collection name to type name mappings (e.g. { "kurs": "Kurs" })
+  noSingularize?: boolean;              // Disable automatic singularization of collection names
 };
 
 /**
