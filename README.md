@@ -59,7 +59,7 @@ directus-typeforge [options]
 ## Available Options
 
 | Option                      | Alias | Description                                                                | Default          |
-| --------------------------- | ----- | -------------------------------------------------------------------------- | ---------------- |
+| --------------------------- | ----- |----------------------------------------------------------------------------| ---------------- |
 | `--snapshotFile`            | `-i`  | Path to schema snapshot file                                               | -                |
 | `--host`                    | `-h`  | Directus host URL                                                          | -                |
 | `--email`                   | `-e`  | Email for authentication                                                   | -                |
@@ -74,6 +74,8 @@ directus-typeforge [options]
 | `--exportSystemCollections` | `-x`  | Export system collections in root schema                                   | `true`           |
 | `--resolveSystemRelations`  | `-y`  | Resolve system collection relationships (e.g. directus_files.folder)       | `true`           |
 | `--addTypedocNotes`         | `-d`  | Add JSDoc comments from field notes                                        | `true`           |
+| `--typeMappings`            |       | Custom collection-to-type mappings (e.g. `kurs:Kurs,ausweis:Ausweis`)      | -                |
+| `--noSingularize`           |       | Disable automatic singularization of collection names                      | `false`          |
 | `--timestamp`               |       | Include generation timestamp in output header                              | `false`          |
 | `--debug`                   |       | Enable debug logging                                                       | `false`          |
 | `--logLevel`                |       | Set log level (error, warn, info, debug, trace)                            | `info`           |
@@ -127,6 +129,12 @@ npx directus-typeforge -i schema-snapshot.json -u -o ./types/schema.ts
 
 # Include generation timestamp in output header
 npx directus-typeforge -i schema-snapshot.json --timestamp -o ./types/schema.ts
+
+# Custom type mappings (useful for non-English collection names)
+npx directus-typeforge -i schema-snapshot.json --typeMappings "kurs:Kurs,ausweis:Ausweis" -o ./types/schema.ts
+
+# Disable singularization entirely (useful for non-English projects)
+npx directus-typeforge -i schema-snapshot.json --noSingularize -o ./types/schema.ts
 
 # Enable debug logging to troubleshoot issues
 npx directus-typeforge -i schema-snapshot.json --debug --logLevel debug --logFile ./typeforge-debug.log -o ./types/schema.ts
